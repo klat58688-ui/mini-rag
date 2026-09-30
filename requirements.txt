@@ -1,0 +1,8 @@
+sqlite-vec>=0.1.6
+rank-bm25>=0.2.2
+jieba>=0.42.1
+pypdf>=4.0
+openai>=1.30
+fastapi>=0.110
+uvicorn>=0.29
+pytest>=8.0

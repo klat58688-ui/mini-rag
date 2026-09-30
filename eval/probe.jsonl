@@ -1,0 +1,36 @@
+{"question": "退款多久到账？", "expect_refuse": false, "topic": "refund_sla", "difficulty": "easy"}
+{"question": "我把钱退回去以后几天能收到？", "expect_refuse": false, "topic": "refund_sla", "difficulty": "para"}
+{"question": "申请退款后大概多久能拿到钱呢？", "expect_refuse": false, "topic": "refund_sla", "difficulty": "para"}
+{"question": "退货以后工作日是怎么算的？", "expect_refuse": false, "topic": "refund_sla", "difficulty": "para"}
+{"question": "退款需要什么条件？", "expect_refuse": false, "topic": "refund_cond", "difficulty": "easy"}
+{"question": "买的商品能无条件退吗？", "expect_refuse": false, "topic": "refund_cond", "difficulty": "para"}
+{"question": "拆开了的包裹还能退吗？", "expect_refuse": false, "topic": "refund_cond", "difficulty": "para"}
+{"question": "如何申请发票？", "expect_refuse": false, "topic": "invoice", "difficulty": "easy"}
+{"question": "我想要一张电子发票，应该在哪里开？", "expect_refuse": false, "topic": "invoice", "difficulty": "para"}
+{"question": "发票抬头填错了能改吗？", "expect_refuse": false, "topic": "invoice_fix", "difficulty": "para"}
+{"question": "开完发票之后税率写错了怎么办？", "expect_refuse": false, "topic": "invoice_fix", "difficulty": "para"}
+{"question": "RAG 是什么意思？", "expect_refuse": false, "topic": "term_rag", "difficulty": "easy"}
+{"question": "什么是检索增强生成？", "expect_refuse": false, "topic": "term_rag", "difficulty": "para"}
+{"question": "BM25 是什么？", "expect_refuse": false, "topic": "term_bm25", "difficulty": "easy"}
+{"question": "能介绍一下倒数排名融合吗？", "expect_refuse": false, "topic": "term_rrf", "difficulty": "para"}
+{"question": "Embedding 干什么的？", "expect_refuse": false, "topic": "term_embed", "difficulty": "para"}
+{"question": "Chunk 是什么意思？", "expect_refuse": false, "topic": "term_chunk", "difficulty": "easy"}
+{"question": "ERR_1042 是什么错误？", "expect_refuse": false, "topic": "err_1042", "difficulty": "easy"}
+{"question": "MySQL 连不上报 1042，应该怎么办？", "expect_refuse": false, "topic": "err_1042", "difficulty": "para"}
+{"question": "ERR_2077 怎么解决？", "expect_refuse": false, "topic": "err_2077", "difficulty": "easy"}
+{"question": "调用上游服务超时返回 2077 是什么意思？", "expect_refuse": false, "topic": "err_2077", "difficulty": "para"}
+{"question": "ERR_3310 是什么？", "expect_refuse": false, "topic": "err_3310", "difficulty": "easy"}
+{"question": "token 提示权限不足怎么办？", "expect_refuse": false, "topic": "err_3310", "difficulty": "para"}
+{"question": "差旅住宿报销上限是多少？", "expect_refuse": false, "topic": "travel_cap", "difficulty": "easy"}
+{"question": "出差住酒店一晚上最多能报多少钱？", "expect_refuse": false, "topic": "travel_cap", "difficulty": "para"}
+{"question": "出差每天的伙食补贴是多少？", "expect_refuse": false, "topic": "travel_meal", "difficulty": "para"}
+{"question": "今天上海的天气怎么样？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "你们的年假政策是什么？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "公司食堂几点开门？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "你们支持周末加班吗？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "我能用你的 API 训练我自己的模型吗？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "如何登录管理后台？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "这个产品当前最新版本号是多少？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "怎么重置我的密码？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "CEO 的邮箱是多少？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
+{"question": "产品支持 Linux 部署吗？", "expect_refuse": true, "topic": "off_topic", "difficulty": "easy"}
