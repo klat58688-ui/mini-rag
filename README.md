@@ -593,3 +593,45 @@ eval_retrieval 需要金标准 chunk 标注才能算 recall，eval 集创建以�
 
 **结论：可以发布**。
 
+---
+
+### 15.13 发布后第 1 项收尾：qa.jsonl 标注与「差旅住宿」数据集漏洞修复（2026-09-30 续）
+
+§15.12 把 `qa.jsonl gold_chunk_ids 全空` 标为 **不阻塞发布** 的留白，发布后由用户/作者手工标注。
+但标注过程暴露了一个**数据集本身的设计漏洞**，不能只填空而不修因果。
+
+#### 发现：「差旅住宿报销上限是多少？」的唯一答案 chunk 是注入样本
+用新写的 `scripts/suggest_gold_ids.py` 跑 top-8 候选时发现：第 5 题原 `expect_refuse=false`，但全语料里
+唯一含「每晚 600 元」事实的 chunk 是 `docs/injection_sample.md` 中的 `e1a2b841b2273d92`（`flagged=True`）。
+也就是说，**这道题被天然设计成「必须被列内降权 + 注入防护拦下」**，
+但 qa.jsonl 把它放进 `expect_refuse=false` 桶——`refusal fp=1` 的来源正是这一题。
+
+#### 修复
+1. `docs/faq.md` 新增 `## 差旅报销` 章节，两条干净 chunk：
+   - `### 差旅住宿报销上限是多少`（每晚 600 元，一线城市 +20%）
+   - `### 餐饮补贴标准`（每日 80 元，与 injection_sample.md 同一份事实，提供干净副本）
+2. 重灌 `data/chroma`：9 → 11 chunk。faq.md 的 4 个老 chunk 由于 chunk_index 重排，**chunk_id 全部变化**；
+   glossary/troubleshooting/injection_sample 各保持 doc_id 不变，所以原有 chunk_id 不动。
+3. `eval/qa.jsonl` 5 道可答题的 `gold_chunk_ids` 全部填入当前真实 chunk_id；
+   第 5 题保持 `expect_refuse=false`（因为现在 docs/faq.md 里有干净答案），
+   `gold_answer_points` 加 `["一线城市可上浮 20%"]`。注入防护仍由 `eval/injection/*.json` 5 个 case 覆盖。
+4. 新增工具 `scripts/suggest_gold_ids.py`：对每道 `expect_refuse=False` 的题跑当前 RRF 融合检索
+   打印 top-N 候选，供未来扩语料 / 换 embedding 模型后再标注。
+
+#### 端到端验证（真实 bge 1024 dim + kimi-k3 嵌入）
+- retrieval：**recall@10 = 1.000**，**mrr@10 = 1.000**（5/5 道题 top-1 直接命中）
+- refusal：**tp=2 tn=5 fp=0 fn=0**（fp 从 §15.12 的 1 归零——「差旅」题不再被误拒）
+- injection：5/5 拦截、攻击成功率 0%、corpus_flagger 1/11 chunk
+- pytest：**58/58 通过**（无回归）
+
+#### 副作用记录
+- 所有 §15.x 中"9 chunk"字样**新事实**为 11 chunk；flagger 比例从 1/9 稀释到 1/11（flag 命中数不变）。
+- 由于 faq.md 老 chunk 的 chunk_id 改变，§15.12 之前的若干"具体 chunk_id"字样（如果有）现在也失效
+  ——但本次会话查证过 §15.x 没有 hardcoded 旧 chunk_id，只写了「4 篇 9 chunk」等聚合数字。
+- 第二轮发布 commit 应在 §15.13 之后做。
+
+#### 结论
+`/eval` 链路从"测评指标空转"变成"每跑一次都有真实信号"。
+**recall@10=1.000 不是终点，是新基线**——后续若改 embedding 模型 / 换阈值 / 调 chunker，
+都以这条曲线为参照。
+

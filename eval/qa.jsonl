@@ -1,7 +1,7 @@
-{"question": "退款多久到账？", "gold_chunk_ids": [], "expect_refuse": false, "gold_answer_points": ["3 个工作日", "节假日顺延"]}
-{"question": "ERR_1042 是什么错误？", "gold_chunk_ids": [], "expect_refuse": false, "gold_answer_points": ["数据库连接被拒绝"]}
-{"question": "RAG 是什么意思？", "gold_chunk_ids": [], "expect_refuse": false, "gold_answer_points": ["检索增强生成"]}
-{"question": "如何申请发票？", "gold_chunk_ids": [], "expect_refuse": false, "gold_answer_points": ["订单详情页", "24 小时"]}
-{"question": "差旅住宿报销上限是多少？", "gold_chunk_ids": [], "expect_refuse": false, "gold_answer_points": ["每晚 600 元"]}
+{"question": "退款多久到账？", "gold_chunk_ids": ["c605ca6063206f4f"], "expect_refuse": false, "gold_answer_points": ["3 个工作日", "节假日顺延"]}
+{"question": "ERR_1042 是什么错误？", "gold_chunk_ids": ["6d72c1bf9eea0c8b"], "expect_refuse": false, "gold_answer_points": ["数据库连接被拒绝"]}
+{"question": "RAG 是什么意思？", "gold_chunk_ids": ["fdf5058a63666051"], "expect_refuse": false, "gold_answer_points": ["检索增强生成"]}
+{"question": "如何申请发票？", "gold_chunk_ids": ["ed10dfe57b54f6dc"], "expect_refuse": false, "gold_answer_points": ["订单详情页", "24 小时"]}
+{"question": "差旅住宿报销上限是多少？", "gold_chunk_ids": ["4d1d90209c5c0dbd"], "expect_refuse": false, "gold_answer_points": ["每晚 600 元", "一线城市可上浮 20%"]}
 {"question": "你们的年假政策是什么？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
 {"question": "公司食堂几点开门？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
