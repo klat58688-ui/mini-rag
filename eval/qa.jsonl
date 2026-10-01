@@ -1,6 +1,6 @@
 {"question": "退款多久到账？", "gold_chunk_ids": ["c605ca6063206f4f"], "expect_refuse": false, "gold_answer_points": ["3 个工作日", "节假日顺延"]}
 {"question": "ERR_1042 是什么错误？", "gold_chunk_ids": ["6d72c1bf9eea0c8b"], "expect_refuse": false, "gold_answer_points": ["数据库连接被拒绝"]}
-{"question": "RAG 是什么意思？", "gold_chunk_ids": ["fdf5058a63666051"], "expect_refuse": false, "gold_answer_points": ["检索增强生成"]}
+{"question": "RAG 是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["检索增强生成"]}
 {"question": "如何申请发票？", "gold_chunk_ids": ["ed10dfe57b54f6dc"], "expect_refuse": false, "gold_answer_points": ["订单详情页", "24 小时"]}
 {"question": "差旅住宿报销上限是多少？", "gold_chunk_ids": ["4d1d90209c5c0dbd"], "expect_refuse": false, "gold_answer_points": ["每晚 600 元", "一线城市可上浮 20%"]}
 {"question": "退款需要满足什么条件？", "gold_chunk_ids": ["3356af24d5cac12a"], "expect_refuse": false, "gold_answer_points": ["七天内且未拆封", "已拆封需联系客服评估"]}
@@ -8,10 +8,10 @@
 {"question": "餐饮补贴标准是多少？", "gold_chunk_ids": ["2ac7ae2c2f04c6aa"], "expect_refuse": false, "gold_answer_points": ["每天 80 元", "按自然日计"]}
 {"question": "ERR_2077 是什么错误？", "gold_chunk_ids": ["dd0fe20645ae4f4b"], "expect_refuse": false, "gold_answer_points": ["上游服务超时", "默认超时 3000ms"]}
 {"question": "ERR_3310 是什么意思？", "gold_chunk_ids": ["8f81adef466badc2"], "expect_refuse": false, "gold_answer_points": ["权限不足", "令牌 scope 需包含 read:data"]}
-{"question": "BM25 是什么？", "gold_chunk_ids": ["fdf5058a63666051"], "expect_refuse": false, "gold_answer_points": ["经典关键词检索算法", "词频与文档长度归一化"]}
-{"question": "Chunk 是什么意思？", "gold_chunk_ids": ["fdf5058a63666051"], "expect_refuse": false, "gold_answer_points": ["文档切分后的最小检索单元"]}
-{"question": "RRF 是什么意思？", "gold_chunk_ids": ["fdf5058a63666051"], "expect_refuse": false, "gold_answer_points": ["倒数排名融合", "用排名而非分数融合"]}
-{"question": "Embedding 是什么？", "gold_chunk_ids": ["fdf5058a63666051"], "expect_refuse": false, "gold_answer_points": ["把文本映射到高维向量", "用余弦等度量语义距离"]}
+{"question": "BM25 是什么？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["经典关键词检索算法", "词频与文档长度归一化"]}
+{"question": "Chunk 是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["文档切分后的最小检索单元"]}
+{"question": "RRF 是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["倒数排名融合", "用排名而非分数融合"]}
+{"question": "Embedding 是什么？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["把文本映射到高维向量", "用余弦等度量语义距离"]}
 {"question": "你们的年假政策是什么？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
 {"question": "公司食堂几点开门？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
 {"question": "今天的天气怎么样？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
@@ -42,8 +42,8 @@
 {"question": "只退一部分怎么算钱？", "gold_chunk_ids": ["26612c09bb50ac74"], "expect_refuse": false, "gold_answer_points": ["按实际退回商品金额折算", "不影响其他商品售后"]}
 {"question": "退款失败了怎么办？", "gold_chunk_ids": ["00ec2367d3945aa7"], "expect_refuse": false, "gold_answer_points": ["原支付账户已注销或卡异常", "联系客服换账户后 3 个工作日重发"]}
 {"question": "拒收之后多久退钱？", "gold_chunk_ids": ["e4a1c340d79c2a6d"], "expect_refuse": false, "gold_answer_points": ["退仓签收后 3 个工作日", "原路退回"]}
-{"question": "幻觉是什么意思？", "gold_chunk_ids": ["bc1c5386414beff7"], "expect_refuse": false, "gold_answer_points": ["模型一本正经编造事实", "RAG 的核心动机之一"]}
-{"question": "微调和 RAG 有什么区别？", "gold_chunk_ids": ["36bcef85754dfd57"], "expect_refuse": false, "gold_answer_points": ["互补而非互斥"]}
+{"question": "幻觉是什么意思？", "gold_chunk_ids": ["985fc00513382c67"], "expect_refuse": false, "gold_answer_points": ["模型一本正经编造事实", "RAG 的核心动机之一"]}
+{"question": "微调和 RAG 有什么区别？", "gold_chunk_ids": ["d4369812ba25e29e"], "expect_refuse": false, "gold_answer_points": ["互补而非互斥"]}
 {"question": "售后多久之内可以申请？", "gold_chunk_ids": ["2d0e2008295ab4f2"], "expect_refuse": false, "gold_answer_points": ["自签收之日起 15 天"]}
 {"question": "找客服多久回复？", "gold_chunk_ids": ["1221bb7f40fef26a"], "expect_refuse": false, "gold_answer_points": ["工作日 30 分钟内响应", "复杂问题 72 小时内结论"]}
 {"question": "ERR_1005 是什么？", "gold_chunk_ids": ["27bbe544d73977f3"], "expect_refuse": false, "gold_answer_points": ["SSL 证书校验失败", "系统时间漂移或代理劫持"]}
@@ -55,3 +55,7 @@
 {"question": "可以寄到国外吗？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
 {"question": "有线下实体店吗？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
 {"question": "怎么申请成为供应商？", "gold_chunk_ids": [], "expect_refuse": true, "gold_answer_points": []}
+{"question": "令牌是什么？", "gold_chunk_ids": ["a748f75597f9503b"], "expect_refuse": false, "gold_answer_points": ["LLM 处理文本的最小单位", "一个汉字约 1-2 个 Token"]}
+{"question": "提示词是什么？", "gold_chunk_ids": ["2e28169c659d8f3d"], "expect_refuse": false, "gold_answer_points": ["喂给模型的指令文本", "系统 Prompt 与用户输入都计入上下文"]}
+{"question": "分块是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["文档切分后的最小检索单元"]}
+{"question": "嵌入是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["把文本映射到高维向量", "用余弦等度量语义距离"]}
