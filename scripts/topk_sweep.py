@@ -6,18 +6,23 @@
   - `flagger_seen_in_citations` 同理恒为 0。
 
 本脚本用**同一份** eval/qa.jsonl + eval/injection/*.json，扫不同
-(vector_top_k, bm25_top_k) 取值，直接观测三件事：
+(vector_top_k, bm25_top_k, final_top_k) 取值，直接观测：
 
   1. 候选池大小   每路实际返回多少 chunk（= min(top_k, 语料大小)）
-  2. 检索质量     recall@10 / mrr@10
-  3. degraded 可达 有多少个 injection case 的 contexts 里真的出现了 flagged chunk
+  2. 检索质量     recall@10（真覆盖率）/ mrr@10
+  3. 丢弃 gold    已进融合池、但排在 final_top_k 之后没进上下文的 gold 个数
+  4. degraded 可达 有多少个 injection case 的 contexts 里真的出现了 flagged chunk
+
+`final_top_k` 维度是 §15.27 新增的：它决定多少条进 LLM 上下文。
+调大能把"已召回却被丢掉"的 gold 捡回来，但也会让 flagged 项更容易进上下文——
+所以这两个数必须一起看。
 
 **不调 LLM**：`degraded` 的判定条件是 `any(c.flagged_injection for c in contexts)`，
 纯检索侧就能算，无需生成。所以本脚本很快（只付一次 embedder 加载 + N 次嵌入）。
 
 用法（在仓库根目录）：
     python scripts/topk_sweep.py
-    python scripts/topk_sweep.py --ks 3 5 8 11 20
+    python scripts/topk_sweep.py --ks 5 --final-ks 5 8 10
 """
 
 from __future__ import annotations
@@ -43,8 +48,8 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 
 def _retrieval(pipeline, items: list[dict]) -> tuple[float, float, int]:
-    """recall@10 / mrr@10，只统计 expect_refuse=False 的题。"""
-    hits = 0
+    """真 recall@10（gold 覆盖率均值）/ mrr@10，只统计 expect_refuse=False 的题。"""
+    cov_sum = 0.0
     rr = 0.0
     n = 0
     for it in items:
@@ -59,11 +64,33 @@ def _retrieval(pipeline, items: list[dict]) -> tuple[float, float, int]:
         )
         top_ids = [c.chunk_id for c in rrf_fuse([v, b], k=pipeline.cfg.rrf_k)[:10]]
         n += 1
+        cov_sum += (len(gold & set(top_ids)) / len(gold)) if gold else 0.0
         rank = next((r for r, cid in enumerate(top_ids, 1) if cid in gold), None)
         if rank is not None:
-            hits += 1
             rr += 1.0 / rank
-    return (hits / n if n else 0.0), (rr / n if n else 0.0), n
+    return (cov_sum / n if n else 0.0), (rr / n if n else 0.0), n
+
+
+def _discarded_gold(pipeline, items: list[dict]) -> int:
+    """**已召回但被 `final_top_k` 丢掉**的 gold 个数（README §15.27）。
+
+    这是纯配置损失：信息在融合池里，只是没进 LLM 上下文。
+    """
+    lost = 0
+    for it in items:
+        if it.get("expect_refuse"):
+            continue
+        v = pipeline._per_list_penalize(
+            pipeline.vector_store.search(it["question"], pipeline.cfg.vector_top_k)
+        )
+        b = pipeline._per_list_penalize(
+            pipeline.bm25_store.search(it["question"], pipeline.cfg.bm25_top_k)
+        )
+        ids = [c.chunk_id for c in rrf_fuse([v, b], k=pipeline.cfg.rrf_k)]
+        for g in it.get("gold_chunk_ids", []):
+            if g in ids and ids.index(g) + 1 > pipeline.cfg.final_top_k:
+                lost += 1
+    return lost
 
 
 def _pool_and_degraded(pipeline, inj_dir: Path) -> tuple[int, int, int]:
@@ -101,8 +128,15 @@ def main() -> int:
         "--ks",
         type=int,
         nargs="+",
-        default=[3, 5, 8, 11, 20],
+        default=[5],
         help="要扫的 top_k 取值（vector 与 bm25 同步）",
+    )
+    ap.add_argument(
+        "--final-ks",
+        type=int,
+        nargs="+",
+        default=[5],
+        help="要扫的 final_top_k 取值（决定多少条进 LLM 上下文）",
     )
     args = ap.parse_args()
 
@@ -115,32 +149,38 @@ def main() -> int:
     n_flag = sum(1 for c in all_chunks if c.flagged_injection)
     print(
         f"语料: {len(all_chunks)} chunk（干净 {n_clean} / flagged {n_flag}）  "
-        f"final_top_k={pipeline.cfg.final_top_k}  rrf_k={pipeline.cfg.rrf_k}"
+        f"rrf_k={pipeline.cfg.rrf_k}  评测集: {len(items)} 条"
     )
     print(
         f"degraded 可达条件（§15.16）: contexts 里出现 flagged chunk "
-        f"⇒ 需要候选池中的干净 chunk 数 < final_top_k({pipeline.cfg.final_top_k})"
+        f"⇒ 需要候选池中的干净 chunk 数 < final_top_k"
+    )
+    print(
+        "「丢弃 gold」= 已进融合池、但排在 final_top_k 之后没进上下文的 gold 个数（§15.27）"
     )
 
     header = (
-        f"\n{'top_k':>6} {'候选池':>7} {'recall@10':>10} {'mrr@10':>8} "
-        f"{'degraded可达':>13}"
+        f"\n{'top_k':>6} {'final_k':>8} {'候选池':>7} {'recall@10':>10} {'mrr@10':>8} "
+        f"{'丢弃gold':>9} {'degraded可达':>13}"
     )
     print(header)
     print("-" * len(header))
     for k in args.ks:
-        pipeline.cfg = replace(pipeline.cfg, vector_top_k=k, bm25_top_k=k)
-        recall, mrr, n = _retrieval(pipeline, items)
-        pool, reach, total = _pool_and_degraded(pipeline, inj_dir)
-        flag = "  ← 全量返回" if pool >= len(all_chunks) else ""
-        print(
-            f"{k:>6} {pool:>7} {recall:>10.3f} {mrr:>8.3f} "
-            f"{f'{reach}/{total}':>13}{flag}"
-        )
+        for fk in args.final_ks:
+            pipeline.cfg = replace(
+                pipeline.cfg, vector_top_k=k, bm25_top_k=k, final_top_k=fk
+            )
+            recall, mrr, _ = _retrieval(pipeline, items)
+            lost = _discarded_gold(pipeline, items)
+            pool, reach, total = _pool_and_degraded(pipeline, inj_dir)
+            flag = "  ← 全量返回" if pool >= len(all_chunks) else ""
+            print(
+                f"{k:>6} {fk:>8} {pool:>7} {recall:>10.3f} {mrr:>8.3f} "
+                f"{lost:>9} {f'{reach}/{total}':>13}{flag}"
+            )
     print(
-        f"\n注: 候选池 >= 语料({len(all_chunks)}) 时检索没有做选择，"
-        f"top-10 截断代替排序机制干活；\n"
-        f"    degraded 只有在候选池里的干净 chunk 少于 final_top_k 时才可能点亮。"
+        f"\n注: 候选池 >= 语料({len(all_chunks)}) 时检索没有做选择；\n"
+        f"    final_top_k 越大，越多「已召回」的 gold 能进上下文，但 flagged 项也更容易进上下文。"
     )
     return 0
 
