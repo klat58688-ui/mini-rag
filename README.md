@@ -557,7 +557,11 @@ eval_retrieval 需要金标准 chunk 标注才能算 recall，eval 集创建以�
 - **不引入** `pyproject.toml`：保留 minimal 项目定位，requirements.txt 已够用。
 
 #### 敏感信息扫描结果
-- 全仓 grep `sk-59jI0xq44JEqK39f4TJWN3kWgU8KlWQggTYm6PIUrLM`：仅出现一次，**仅在 `.env` 内**。
+- 全仓 grep 密钥值（`sk-` 前缀 + 共 46 字符）：**仅在 `.env` 内**。
+  > ⚠️ **本条曾经把密钥原文抄进 README（`b32c93a`）——一次自打脸的扫描**：为了"证明密钥只出现在
+  > `.env`"，却把密钥值本身写进了 README，于是它同时存在于两个文件。此处已脱敏；
+  > 但**该 key 仍留在 `b32c93a` 的提交历史中**（本仓库从未推送过，泄漏面仅限本机）。
+  > 若将来要把仓库转为公开，必须先重写历史清除**并**轮换该 key。
 - `.env.example` 全是占位符，README/scripts/tests/docs 中均无密钥泄漏。
 - `.gitignore` 现在拦住了 `.env`，未来 git init 不会误提交。
 
