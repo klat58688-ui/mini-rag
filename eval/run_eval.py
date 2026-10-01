@@ -160,7 +160,15 @@ def eval_refusal(pipeline, items: list[dict], repeat: int = 1) -> dict:
             by_rule[b] = by_rule.get(b, 0) + c
         if not agg["stable"]:
             unstable.append(agg)
-        details.append({**agg, "refused": refused})
+        # 保留单数字段以兼容 repeat=1 的历史口径（`reason` / `bucket`）：
+        # 取**首次拒答**那一次的原因，便于人工诊断是哪条规则在工作。
+        first_refused = next((t for t in trials if t["refused"]), None)
+        details.append({
+            **agg,
+            "refused": refused,
+            "reason": first_refused["reason"] if first_refused else None,
+            "bucket": first_refused["bucket"] if first_refused else None,
+        })
     return {
         "tp": tp, "tn": tn, "fp": fp, "fn": fn,
         "by_rule": by_rule,

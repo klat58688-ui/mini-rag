@@ -114,3 +114,21 @@ def test_repeat_one_matches_single_shot_semantics():
     # a 该拒未拒 → fn；b 不该拒却拒了 → fp
     assert (rep["tp"], rep["tn"], rep["fp"], rep["fn"]) == (0, 0, 1, 1)
     assert rep["unstable_count"] == 0  # 单次采样恒稳定
+
+
+def test_detail_keeps_singular_reason_and_bucket_for_compat():
+    """`reason` / `bucket` 是 repeat=1 时代的历史口径，重构后必须保留，否则诊断信息丢失。"""
+    items = [{"question": "a", "expect_refuse": True}]
+    rep = eval_refusal(_StubPipeline({"a": [True, True]}), items, repeat=2)
+    d = rep["details"][0]
+    assert d["bucket"] == "low_cosine"
+    assert d["reason"] == "检索相关性过低"
+    assert d["buckets"] == {"low_cosine": 2}   # 复数口径仍在
+
+
+def test_detail_reason_is_none_when_never_refused():
+    items = [{"question": "b", "expect_refuse": False}]
+    rep = eval_refusal(_StubPipeline({"b": [False, False]}), items, repeat=2)
+    d = rep["details"][0]
+    assert d["reason"] is None
+    assert d["bucket"] is None
