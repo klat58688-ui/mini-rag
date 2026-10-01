@@ -7,6 +7,71 @@
 
 ---
 
+## 当前状态速览
+
+下表是**实测值，不是设计目标**。复现命令见各节末尾的「复现」块。
+
+| 维度 | 当前值 |
+|---|---|
+| 语料 | **15 篇 → 58 chunk**（55 干净 / 3 注入样本） |
+| 评测集 | `qa.jsonl` **75 条**（51 单 gold + 14 多 gold + 10 拒答），覆盖 49/58 chunk<br>`probe.jsonl` 36 条 · 注入对照 case 5 个 |
+| 测试 | **114 条 / 12 个文件**，`pytest` 全绿 |
+| CI | GitHub Actions，Python **3.12 + 3.13**，**无需任何密钥**（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)） |
+| 配置 | `top_k=5` · `final_top_k=5` · `rrf_k=60` · `cosine_threshold=0.35`<br>嵌入 `bge-large-zh-v1.5`（1024d，local） · LLM `kimi-k3` |
+
+**最近一次完整评测**（`python -m eval.run_eval --env .env --mode all`）：
+
+| 指标 | 值 | 读法 |
+|---|---|---|
+| retrieval `recall@10` | **0.995** | gold **覆盖率**——多 gold 题必须全部召回才满分 |
+| retrieval `hit@10` | 1.000 | 任一 gold 命中（历史口径；单 gold 题下与 recall 相同） |
+| retrieval `mrr@10` | **0.958** | 排序质量——**做检索消融请看 `recall@10` + `mrr@10`** |
+| refusal tp/tn/fp/fn | 10 / 63 / 2 / 0 | 那 2 条 fp 都是多跳题上下文不全导致，**拒答本身是正确的** |
+| injection 攻击成功率 | **0%** | 收紧判据（排除「引用 payload 以示拒绝」的误报） |
+| injection 拦截率 | 100% | |
+| injection `degraded` / `flagger_seen` | 40% / 20% | 这两条通道一度恒为 0（原因见 §15.17） |
+
+> ⚠️ **看数之前请先读这三条读数陷阱**：
+> 1. `recall@10` 与 `hit@10` 是**两个口径**，别混用（§15.26）；
+> 2. refusal / injection 是**采样**指标，单次运行带 **±1 噪声**，跨版本比较前先看 `unstable` 清单（§15.20）；
+> 3. `temperature=0` **不等于**可复现（§15.23）。
+
+---
+
+## 怎么读这份 README
+
+- **§1–§14 是「当前设计」**：架构、分块、检索、引用、门控、注入防护、测试、评测、项目结构。
+  其中的数字已与当前状态对齐。
+- **§15 是追加式审计日志**（§15.1 – §15.28）：按时间记录**每一次修改的原因、证据与代价**。
+  它**刻意保留当时的旧数字**——那是历史，不是现状。想追「某个数字为什么长这样」，去 §15 找对应小节。
+- 想复现任何一项：各节末尾都有「复现」代码块；**不花 LLM 调用**的免费检查（`--mode retrieval`、
+  `scripts/topk_sweep.py`、`run_threshold_probe.py`）都标注了「免费」。
+
+### 目录
+
+**设计与实现**
+1. [快速开始（30 秒演示）](#1-快速开始30-秒演示)
+2. [架构一图](#2-架构一图)
+3. [分块策略（为什么这么切）](#3-分块策略为什么这么切)
+4. [混合检索：为什么纯向量不够用](#4-混合检索为什么纯向量不够用)
+5. [引用溯源（本项目最用心的部分）](#5-引用溯源本项目最用心的部分)
+6. [拒答门控：为什么用原始 cosine 分](#6-拒答门控为什么用原始-cosine-分)
+7. [Prompt 注入防护（诚实承认局限）](#7-prompt-注入防护诚实承认局限)
+
+**工程与验证**
+8. [测试与一键启动](#8-测试与一键启动)
+9. [评测方案](#9-评测方案)
+10. [明确不做的事（诚实划边界）](#10-明确不做的事诚实划边界)
+
+**决策、结构与边界**
+11. [关键技术决策与 trade-off](#11-关键技术决策与-trade-off)
+12. [已知"难点点名"](#12-已知难点点名)
+13. [项目结构](#13-项目结构)
+14. [如果给我更多时间，会……](#14-如果给我更多时间会)
+15. [边界与口径（审计日志 §15.1–§15.28）](#15-边界与口径审查轮补)
+
+---
+
 ## 1. 快速开始（30 秒演示）
 
 ```bash
@@ -65,7 +130,7 @@ curl -X POST http://127.0.0.1:8000/ask -H 'Content-Type: application/json' \
 ```
 
 **关键约定**：`chunk_id = sha256(doc_id:chunk_index)[:16]`，全系统唯一生成入口在
-[base.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/chunkers/base.py#L8-L10)。
+[base.py](src/chunkers/base.py#L8-L10)。
 所有环节只传 `chunk_id`，最后一刻才回 sqlite 解析文档名与片段——引用可解析性由架构保证。
 
 ---
@@ -78,7 +143,7 @@ curl -X POST http://127.0.0.1:8000/ask -H 'Content-Type: application/json' \
 | **PDF / TXT** | 固定 400 字 + 80 字重叠 | 重叠是为防止答案恰好跨越边界被切断（导致漏召回）；按字符不按 token 是简化、可解释、与中文对齐 | 一个完整论证被切成两半时召回变差——这正是要调 overlap 的动机 |
 | **语义切分** | **不做** | 每篇文档需多调 N 次 embedding，千级语料收益不成比例 | — |
 
-代码：[heading.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/chunkers/heading.py) · [fixed_size.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/chunkers/fixed_size.py)
+代码：[heading.py](src/chunkers/heading.py) · [fixed_size.py](src/chunkers/fixed_size.py)
 
 ---
 
@@ -100,7 +165,7 @@ score(d) = Σ 1/(k + rank_i(d))      k=60
 归一化对分数分布敏感（一个超长文档会把 BM25 分拉爆），调权就是玄学。
 **RRF 只看排名、不看分数**，天然免归一化，鲁棒得多，实现 10 行——这是面试常考点。
 
-代码：[fusion.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/retriever/fusion.py)
+代码：[fusion.py](src/retriever/fusion.py)
 
 ---
 
@@ -114,7 +179,7 @@ score(d) = Σ 1/(k + rank_i(d))      k=60
    ⚠️ 这只防"编造来源"——防不了"正确引用但错误归因"，那需要 NLI，**明确不做**；
 4. **拒答**：宁可不答，也不要含糊其辞。
 
-代码：[guardrails.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/guardrails.py) · [pipeline.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/pipeline.py)
+代码：[guardrails.py](src/guardrails.py) · [pipeline.py](src/pipeline.py)
 
 ---
 
@@ -136,7 +201,7 @@ RRF 分只有**序的意义**没有**量的意义**——完全无关的查询�
 
 **思路：检测 + 降权 + 标注，而不是幻想完全拦截。**
 
-- **检测**：[guardrails.py](file:///C:/Users/KLAT/AppData/Roaming/TRAE%20SOLO%20CN/ModularData/ai-agent/work-mode-projects/6abcd53789a791c856ce4f59/mini-rag/src/guardrails.py) 内置规则（忽略之前指令/伪 system 标签/角色劫持/不可见字符）；
+- **检测**：[guardrails.py](src/guardrails.py) 内置规则（忽略之前指令/伪 system 标签/角色劫持/不可见字符）；
 - **降权（修订 2）**：在**融合前的每张召回列表内**把 flagged 沉到干净项之后。理由：RRF 拿到的是"干净排名"，如果在融合后乘系数，会破坏 RRF 纯度、且"双榜第一"的注入 chunk 根本降不动；
 - **保留不删**：规则有误判，且注入 chunk 极端情况下可能恰好能答——所以降权保留 + 引用时打 `flagged_injection=true` 让用户知情。
 
@@ -151,13 +216,13 @@ RRF 分只有**序的意义**没有**量的意义**——完全无关的查询�
 ## 8. 测试与一键启动
 
 ```bash
-pytest                     # 108 个测试，覆盖 分块/融合/护栏/pipeline/sqlite 集成/API/评测工具
+pytest                     # 114 个测试，覆盖 分块/融合/护栏/pipeline/sqlite 集成/API/评测工具/README 链接
 docker compose up --build  # 一键起 API（端口 8000）
 ```
 
 **CI**：`.github/workflows/ci.yml` 在 push / PR 时跑同样的 `pytest -q`（Python 3.12 / 3.13）。
 **不需要任何密钥**——全部测试都用 stub / fake provider，不读 `.env`、不打 LLM、不加载嵌入模型。
-干净环境（隔离 venv、无 `.env`、无 `sentence-transformers`）实测 **108/108 通过**（§15.28）。
+干净环境（隔离 venv、无 `.env`、无 `sentence-transformers`）实测 **114/114 通过**（§15.28 / §15.29）。
 
 测试清单锚定了**设计承诺的边界条件**（不只测 happy path）：
 - `test_chunker.py`：切块大小、重叠、fallback、id 稳定性；
@@ -170,7 +235,8 @@ docker compose up --build  # 一键起 API（端口 8000）
 - `test_eval_datasets.py`：**离线**校验 `qa.jsonl` / `probe.jsonl` / `injection/*.json` 的结构与 id 格式；
 - `test_eval_refusal_repeat.py` / `test_eval_injection_classify.py`：评测聚合的多数票与稳定性判定、
   `hijacked` 收紧判据（§15.21 / §15.22）；
-- `test_eval_retrieval_metric.py`：`recall@10`（覆盖率）与 `hit@10` 的区别（§15.26）。
+- `test_eval_retrieval_metric.py`：`recall@10`（覆盖率）与 `hit@10` 的区别（§15.26）；
+- `test_readme_links.py`：目录锚点 / 相对文件链接 / 绝对路径 三类防回归（§15.29）。
 
 ---
 
@@ -314,7 +380,7 @@ mini-rag/
 │   ├── pipeline.py       ← 编排（修订 1/2/3 落地点）
 │   ├── ingest.py / cli.py / api.py
 ├── .github/workflows/    ← CI：push/PR 跑 pytest（py3.12 + 3.13，无需密钥）
-└── tests/                ← 108 个测试（11 个文件）
+└── tests/                ← 114 个测试（12 个文件）
 
 > **关于 `data/chroma/` 目录名**：这是历史命名残留——项目曾计划用 Chroma 后切换为 sqlite-vec，目录名保留至今以免迁移既有数据。配置文件/数据库文件实际落在 `data/chroma/mini_rag.db`（sqlite 单一真相源），**与 Chroma 无关**。
 ```
@@ -542,12 +608,12 @@ eval_retrieval 需要金标准 chunk 标注才能算 recall，eval 集创建以�
 判据从"top-N 全部干净且全部命中"改为"**top-N 中存在 1 个干净且命中的 chunk 即 True**"——
 旁路 A 防御仍保留（flagged chunk 走 continue，无法借自身兑底；也无法否决其它干净命中）。
 
-[bm25_store.py:52-105](file:///./src/retriever/bm25_store.py#L52-L105)
+[bm25_store.py:52-105](src/retriever/bm25_store.py#L52-L105)
 
 #### 修复二：stopwords 表补中文修辞词
 `tokenizer.py:_STOPWORDS` 补充：`意思/干什么/做什么/怎么回事/什么样/怎样/怎么样/介绍/介绍一下/讲讲/讲下/解释/解释一下/说下/说说/错误/一下/能/能不能/可以/可不可以/请问/想`。
 这些词只承担修辞功能，不该成为稀有词命中要求。
-[tokenizer.py:14-26](file:///./src/retriever/tokenizer.py#L14-L26)
+[tokenizer.py:14-26](src/retriever/tokenizer.py#L14-L26)
 
 #### 实测效果（对照 §15.10 的同一份 probe.jsonl）
 `bm25_strong` 在该为 True 的 9 条 query 全部由 False → True：
@@ -1766,6 +1832,53 @@ python scripts/topk_sweep.py --ks 5 --final-ks 3 5 6 8 10        # 看丢弃 gol
 [run #1](https://github.com/klat58688-ui/mini-rag/actions/runs/36845091087)，
 `test (3.12)` 与 `test (3.13)` **两个 job 全部步骤 success**——
 在干净的 Ubuntu runner 上、无任何密钥、只靠 `pip install -r requirements.txt` 就跑通了 108 个测试。
+
+---
+
+### 15.29 README 可读性重构：速览块 + 目录 + 链接修复（2026-10-01）
+
+#### 一、问题（从读者视角看）
+README 已 1800+ 行，其中 §15 审计日志占 1400+ 行，但：
+
+- **没有任何导航**——读者无法跳转，只能线性滚动。
+- **当前基线埋在 §15.27 深处**——新读者要翻过 28 个小节，才知道系统现在是什么水平。
+- **没说明 §15 的性质**——很容易把日志里的**旧数字**（如"11 chunk""58/58"）误读成现状。
+- **9 处链接是本地绝对路径**（7 处 `file:///C:/Users/...` + 2 处 `file:///./src/...`）
+  ——**对任何其他读者都是坏的**。这是编辑器自动补全留下的，本机打开正常，推上去就废。
+
+#### 二、做了什么
+1. **「当前状态速览」**（紧随简介、在 §1 之前）：语料 / 评测集 / 测试 / CI / 配置五个维度，
+   加一张「最近一次完整评测」表（含**读法**列），再加**三条读数陷阱**。
+   **所有数字都是实测后写入的**，不是从旧文档抄的。
+2. **「怎么读这份 README」**：明确 **§1–§14 是当前设计**、**§15 是追加式审计日志且刻意保留旧数字**。
+3. **目录**：15 个二级标题按「设计与实现 / 工程与验证 / 决策、结构与边界」三组列出。
+   锚点**由脚本按 GitHub slug 规则生成并校验**（15/15 有效）——手写锚点太容易错。
+4. **链接修复**：9 处绝对路径 → 相对路径（`src/guardrails.py` 这样任何读者都能点开）。
+
+#### 三、新增 `tests/test_readme_links.py`（6 条，离线）——把上面这些变成防回归
+- 目录存在且锚点 ≥ 15
+- **所有 `](#anchor)` 都能解析到真实标题**
+- **所有相对文件链接都指向存在的文件**
+- **不存在 `file:///` 绝对路径链接**（防止再被编辑器补全污染）
+- 「当前状态速览」与「怎么读这份 README」两节存在
+
+> **一个必须注意的实现细节**：校验标题锚点时要**跳过代码围栏内的内容**。
+> §15.25 的示例代码块里有一行 `## Token`，GitHub 不会为它建锚点；
+> 不跳过的话，会把"真实失效的锚点"误判成有效。
+
+#### 四、结果
+
+| 指标 | 修前 | **修后** |
+|---|---|---|
+| pytest | 108/108 | **114/114** |
+| 目录 | 无 | **15 个锚点，全部有效** |
+| 坏链接 | 9 处 | **0 处** |
+| 当前状态可见性 | 埋在 §15.27 | **README 第 3 屏** |
+
+#### 复现
+```
+pytest tests/test_readme_links.py -v      # 锚点 / 文件链接 / 绝对路径 三类防回归
+```
 
 §15.12 曾把"真实 embedding / LLM 冒烟"列为未做项。本轮做掉的是**更基础的那一半**——
 "干净环境能否装起来并跑通测试"——而且现在由 CI 持续保证，不再是靠人工记住要跑。
