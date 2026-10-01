@@ -59,3 +59,17 @@
 {"question": "提示词是什么？", "gold_chunk_ids": ["2e28169c659d8f3d"], "expect_refuse": false, "gold_answer_points": ["喂给模型的指令文本", "系统 Prompt 与用户输入都计入上下文"]}
 {"question": "分块是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["文档切分后的最小检索单元"]}
 {"question": "嵌入是什么意思？", "gold_chunk_ids": ["e212aa10691d299f"], "expect_refuse": false, "gold_answer_points": ["把文本映射到高维向量", "用余弦等度量语义距离"]}
+{"question": "在北京出差住 3 晚，住宿加餐补一共能报多少？", "gold_chunk_ids": ["4d1d90209c5c0dbd", "2ac7ae2c2f04c6aa", "03e2969782809171"], "expect_refuse": false, "gold_answer_points": ["住宿上限 600/晚、一线+20%", "餐饮补贴 80/天", "一线城市=北上广深"]}
+{"question": "退货的运费谁承担，退款多久能到账？", "gold_chunk_ids": ["af4d29eb6705b105", "c605ca6063206f4f"], "expect_refuse": false, "gold_answer_points": ["无理由退货买家承担", "质量问题平台承担", "退款 3 个工作日"]}
+{"question": "发票抬头填错了怎么改，改完要等多久？", "gold_chunk_ids": ["1fe9f3db8cfe6d05", "0dbb4732d6878510"], "expect_refuse": false, "gold_answer_points": ["不能直接改，需先冲红", "冲红后 1-3 个工作日重开"]}
+{"question": "换货需要什么条件，寄出要多久？", "gold_chunk_ids": ["4e4e4eed0f43f2b1", "2264e5cee8b81cb3"], "expect_refuse": false, "gold_answer_points": ["七天内商品完好", "收到退回件后 2 个工作日发出"]}
+{"question": "报销审批通过后多久到账？超标的部分怎么办？", "gold_chunk_ids": ["e302b917b132b69c", "d814d03c89e9efad"], "expect_refuse": false, "gold_answer_points": ["5 个工作日打款到工资卡", "超标部分个人承担，可申请特批"]}
+{"question": "ERR_1042 和 ERR_1005 分别代表什么？", "gold_chunk_ids": ["6d72c1bf9eea0c8b", "27bbe544d73977f3"], "expect_refuse": false, "gold_answer_points": ["ERR_1042 数据库连接被拒", "ERR_1005 SSL 证书校验失败"]}
+{"question": "优惠券能和会员折扣叠加吗？过期了能补吗？", "gold_chunk_ids": ["01f1a57a6ca7c90c", "2ce035f4468a3813"], "expect_refuse": false, "gold_answer_points": ["不可叠加，每单限一张", "过期不补发"]}
+{"question": "下单后想改地址，或者直接取消订单可以吗？", "gold_chunk_ids": ["2ae03cf8209c0523", "9fd261d7b81e100c"], "expect_refuse": false, "gold_answer_points": ["未付款可直接改址", "未发货可自助取消"]}
+{"question": "包裹显示签收但我没收到，拒收能退款吗？", "gold_chunk_ids": ["2669eaa9f4834fb5", "e4a1c340d79c2a6d"], "expect_refuse": false, "gold_answer_points": ["先确认驿站或邻居代收", "拒收后 3 个工作日退款"]}
+{"question": "电子发票效力和纸质一样吗？丢了能重开吗？", "gold_chunk_ids": ["b8f77d4605d97a6e", "0dbb4732d6878510"], "expect_refuse": false, "gold_answer_points": ["效力相同", "冲红后 1-3 个工作日重开"]}
+{"question": "预售商品什么时候发货，怎么查物流？", "gold_chunk_ids": ["3d00787f1798fc0c", "512b9fec5a4aa52b"], "expect_refuse": false, "gold_answer_points": ["以商品页标注发货日期为准", "订单详情页查看物流"]}
+{"question": "住宿发票有什么要求？超过报销标准怎么办？", "gold_chunk_ids": ["e0d1de49f6b7a41d", "d814d03c89e9efad"], "expect_refuse": false, "gold_answer_points": ["抬头需与公司全称一致", "超标部分个人承担"]}
+{"question": "账号被锁了怎么办，登录设备上限是多少？", "gold_chunk_ids": ["28e7cb784231579d", "aa76815b99b7959a"], "expect_refuse": false, "gold_answer_points": ["5 次密码错误锁 2 小时", "最多同时登录 5 台设备"]}
+{"question": "退款到账失败怎么办，拒收包裹多久退钱？", "gold_chunk_ids": ["00ec2367d3945aa7", "e4a1c340d79c2a6d"], "expect_refuse": false, "gold_answer_points": ["换退款账户后 3 个工作日重发", "拒收后 3 个工作日退款"]}

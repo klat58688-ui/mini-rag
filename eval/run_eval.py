@@ -39,9 +39,18 @@ def load_qa(path: Path) -> list[dict]:
     return items
 
 
-def eval_retrieval(pipeline, items: list[dict]) -> dict:
-    """Recall@10 / MRR@10，只统计 expect_refuse=False 的题。"""
-    hits_at_k = 0
+def eval_retrieval(pipeline, items: list[dict], k: int = 10) -> dict:
+    """检索质量：**真 recall@k**（gold 覆盖率）+ hit@k（任一命中）+ mrr@k。
+
+    为什么区分这两个（§15.26）：
+    - 旧实现只算"top-k 里有没有**任一** gold"，那其实是 **hit@k**，却被叫作 recall。
+      对单 gold 题目两者等价，所以长期没暴露；但它**无法表达多跳要求**
+      （一道题需要两个块时，"召回其中一个"不该算满分）。
+    - `recall@k` = 每题 `|retrieved ∩ gold| / |gold|` 的均值。单 gold 题目下它与 hit@k 相同，
+      所以历史数字对单 gold 子集仍可比。
+    """
+    hit_at_k = 0
+    recall_sum = 0.0
     rr_sum = 0.0
     n = 0
     details = []
@@ -54,23 +63,34 @@ def eval_retrieval(pipeline, items: list[dict]) -> dict:
         v = pipeline._per_list_penalize(v)
         b = pipeline._per_list_penalize(b)
         fused = rrf_fuse([v, b], k=pipeline.cfg.rrf_k)
-        top_ids = [c.chunk_id for c in fused[:10]]
+        top_ids = [c.chunk_id for c in fused[:k]]
         n += 1
+
+        covered = gold & set(top_ids)
+        coverage = (len(covered) / len(gold)) if gold else 0.0
+        recall_sum += coverage
+
         first_rank = next(
             (rank for rank, cid in enumerate(top_ids, 1) if cid in gold), None
         )
         if first_rank is not None:
-            hits_at_k += 1
+            hit_at_k += 1
             rr_sum += 1.0 / first_rank
         details.append({
             "question": it["question"],
             "gold": list(gold),
             "top10": top_ids,
             "first_hit_rank": first_rank,
+            "n_gold": len(gold),
+            "n_covered": len(covered),
+            "coverage": coverage,
         })
     return {
         "n": n,
-        "recall@10": hits_at_k / n if n else 0.0,
+        # 真 recall：多 gold 题目要求全部召回才算满分
+        "recall@10": recall_sum / n if n else 0.0,
+        # 任一 gold 命中即算（历史口径，为兼容保留）
+        "hit@10": hit_at_k / n if n else 0.0,
         "mrr@10": rr_sum / n if n else 0.0,
         "details": details,
     }
@@ -341,7 +361,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode in ("retrieval", "all"):
         report["retrieval"] = eval_retrieval(pipeline, items)
         r = report["retrieval"]
-        print(f"[retrieval] n={r['n']}  recall@10={r['recall@10']:.3f}  mrr@10={r['mrr@10']:.3f}")
+        print(f"[retrieval] n={r['n']}  recall@10={r['recall@10']:.3f}  "
+              f"hit@10={r['hit@10']:.3f}  mrr@10={r['mrr@10']:.3f}")
+        partial = [d for d in r["details"] if d["n_gold"] > 1 and d["coverage"] < 1.0]
+        if partial:
+            print(f"  ⚠️ {len(partial)} 道多 gold 题未召回全部 gold（真 recall 低于 hit@10 的原因）:")
+            for d in partial:
+                print(f"     覆盖 {d['n_covered']}/{d['n_gold']}  {d['question']}")
     if args.mode in ("refusal", "all"):
         report["refusal"] = eval_refusal(pipeline, items, repeat=args.repeat)
         r = report["refusal"]
