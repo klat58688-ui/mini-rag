@@ -151,9 +151,13 @@ RRF 分只有**序的意义**没有**量的意义**——完全无关的查询�
 ## 8. 测试与一键启动
 
 ```bash
-pytest                     # 78 个测试，覆盖 分块/融合/护栏/pipeline/sqlite 集成/BM25 strong_match/评测聚合
+pytest                     # 108 个测试，覆盖 分块/融合/护栏/pipeline/sqlite 集成/API/评测工具
 docker compose up --build  # 一键起 API（端口 8000）
 ```
+
+**CI**：`.github/workflows/ci.yml` 在 push / PR 时跑同样的 `pytest -q`（Python 3.12 / 3.13）。
+**不需要任何密钥**——全部测试都用 stub / fake provider，不读 `.env`、不打 LLM、不加载嵌入模型。
+干净环境（隔离 venv、无 `.env`、无 `sentence-transformers`）实测 **108/108 通过**（§15.28）。
 
 测试清单锚定了**设计承诺的边界条件**（不只测 happy path）：
 - `test_chunker.py`：切块大小、重叠、fallback、id 稳定性；
@@ -162,8 +166,11 @@ docker compose up --build  # 一键起 API（端口 8000）
 - `test_pipeline_mock.py`：编排顺序、拒答短路、INSUFFICIENT_CONTEXT 兜底、P0-2 旁路 A/B；
 - `test_bm25_strong_match.py`：`strong_exact_match` 的"存在性"语义与中文 stopwords；
 - `test_vector_store_integration.py`：sqlite-vec 真实建库、KNN、幂等、删除；
+- `test_api.py`：`/healthz` / `/ask` 的状态码、`Answer` 序列化、参数校验、异常映射、启动契约；
+- `test_eval_datasets.py`：**离线**校验 `qa.jsonl` / `probe.jsonl` / `injection/*.json` 的结构与 id 格式；
 - `test_eval_refusal_repeat.py` / `test_eval_injection_classify.py`：评测聚合的多数票与稳定性判定、
-  `hijacked` 收紧判据（§15.21 / §15.22）。
+  `hijacked` 收紧判据（§15.21 / §15.22）；
+- `test_eval_retrieval_metric.py`：`recall@10`（覆盖率）与 `hit@10` 的区别（§15.26）。
 
 ---
 
@@ -276,7 +283,7 @@ mini-rag/
 ├── LICENSE               ← MIT
 ├── .gitignore
 ├── .env.example
-├── requirements.txt      ← 8 行核心依赖；sentence-transformers 是 local 模式可选件
+├── requirements.txt      ← 核心依赖 + 测试依赖（pytest / httpx）；sentence-transformers 是 local 模式可选件
 ├── Dockerfile / docker-compose.yml
 ├── pytest.ini
 ├── docs/                 ← 语料 15 篇 → 58 chunk（含 3 篇注入样本，见 §15.18）
@@ -306,7 +313,8 @@ mini-rag/
 │   ├── generator.py      ← OpenAI 兼容 LLM + 强约束 Prompt
 │   ├── pipeline.py       ← 编排（修订 1/2/3 落地点）
 │   ├── ingest.py / cli.py / api.py
-└── tests/                ← 78 个测试（8 个文件）
+├── .github/workflows/    ← CI：push/PR 跑 pytest（py3.12 + 3.13，无需密钥）
+└── tests/                ← 108 个测试（11 个文件）
 
 > **关于 `data/chroma/` 目录名**：这是历史命名残留——项目曾计划用 Chroma 后切换为 sqlite-vec，目录名保留至今以免迁移既有数据。配置文件/数据库文件实际落在 `data/chroma/mini_rag.db`（sqlite 单一真相源），**与 Chroma 无关**。
 ```
@@ -1692,4 +1700,68 @@ if first_rank is not None:
 python -m eval.run_eval --env .env --mode retrieval              # 免费，看 recall/mrr
 python scripts/topk_sweep.py --ks 5 --final-ks 3 5 6 8 10        # 看丢弃 gold 与 degraded 的权衡
 ```
+
+---
+
+### 15.28 补齐 `api.py` 测试 + 数据集完整性测试 + CI（2026-10-01）
+
+仓库公开后回头看，发现三处"发布该有但没有"的东西。
+
+#### 一、缺口盘点
+1. **`src/api.py` 零测试覆盖**——README 里给了 `/ask` 的 curl 示例，但没有任何测试碰过它。
+2. **没有 CI**——代码已经推到 GitHub，却没有任何自动检查。
+3. **`requirements.txt` 缺 `httpx`**——`fastapi.testclient.TestClient` 的运行时依赖。
+   缺了它，API 测试在干净环境里会直接 `ImportError`（本机之所以没暴露，是因为全局环境早装了）。
+
+#### 二、新增 `tests/test_api.py`（10 条）
+用 stub pipeline 顶替真实构建（monkeypatch `api.build_pipeline`），**不打 LLM、不加载嵌入、不读 `.env`**：
+
+- **启动契约**：lifespan 确实以 `".env"` 调用 `build_pipeline`
+- `/healthz` → 200 `{"status":"ok"}`
+- `/ask` 正常路径：`Answer`（含嵌套 `Citation`）经 `asdict` 完整序列化，字段逐个校验
+- `/ask` 拒答路径：`refused` / `refusal_reason` 正确透传
+- 问题**去首尾空白**后才进 pipeline（用 stub 记录实参验证）
+- 参数校验：空串 / 纯空白 / 缺字段 / 字段名写错 → **400，且不触达 pipeline**
+- pipeline 抛异常 → **500**，detail 带原始原因
+
+#### 三、新增 `tests/test_eval_datasets.py`（8 条）——离线数据集完整性
+动机：本项目**反复**因为"重灌索引后 gold id 悬空"踩坑（§15.13 / §15.25 / §15.27），
+每一次都是靠人工比对发现的。这类错误可以在**不加载索引**的前提下挡住大半：
+
+- `qa.jsonl` 可解析、字段齐全、问题非空且不重复
+- 可答题：至少 1 个 gold、无重复、**id 格式合法**（`^[0-9a-f]{16}$`）
+- 拒答题：`gold_chunk_ids` 必须为空
+- 两个桶都存在，且**存在多 gold（多跳）题**（§15.26 的区分度来源）
+- `probe.jsonl` 字段齐全、relevant / irrelevant 两类都有
+- `eval/injection/*.json` ≥5 个且都带 `forbidden_substring`
+
+> **边界要说清**："id 是否真的存在于索引里"仍必须跑 `eval.run_eval`（需要嵌入模型）。
+> 本测试只能挡**格式与结构**错误。但把"悬空"从"要靠人工比对"降到"格式错就报错"，收益已经很实在。
+
+#### 四、新增 CI：`.github/workflows/ci.yml`
+- 触发：push 到 `main`、PR、手动
+- 矩阵：Python **3.12 / 3.13**（`fail-fast: false`）
+- 步骤：checkout → setup-python（pip 缓存）→ `pip install -r requirements.txt` → `pytest -q`
+
+**可行性是核实过的，不是拍脑袋**：
+
+| 待验事项 | 结论 |
+|---|---|
+| CI 需要密钥吗？ | **不需要**——全部测试用 stub / fake provider，不读 `.env`、不打 LLM、不加载嵌入模型 |
+| 干净环境能装起来吗？ | 隔离 venv 里从零 `pip install -r requirements.txt` → **exit 0**（约 8 分钟） |
+| 干净环境能跑通吗？ | **108/108 通过**；且**把 `.env` 移开后再跑一遍，仍然 108/108** |
+| 3.12 / 3.13 都能装 sqlite-vec 吗？ | 能——其 wheel 是 `py3-none-manylinux_2_17_x86_64` / `py3-none-win_amd64`，**不绑 Python 版本** |
+
+#### 五、结果
+
+| 指标 | 修前 | **修后** |
+|---|---|---|
+| pytest | 90/90 | **108/108** |
+| `src/api.py` 覆盖 | 0 条 | **10 条** |
+| 数据集完整性检查 | 无 | **8 条（离线）** |
+| CI | 无 | **GitHub Actions，py3.12 + 3.13** |
+| 干净环境冒烟 | **未做过**（§15.12 明确承认） | **已做：无 `.env` 下 108/108** |
+
+§15.12 曾把"真实 embedding / LLM 冒烟"列为未做项。本轮做掉的是**更基础的那一半**——
+"干净环境能否装起来并跑通测试"——而且现在由 CI 持续保证，不再是靠人工记住要跑。
 
