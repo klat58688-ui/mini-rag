@@ -93,34 +93,82 @@ def _refusal_bucket(reason: str | None) -> str:
     return "other"
 
 
-def eval_refusal(pipeline, items: list[dict]) -> dict:
+def aggregate_refusal_trials(
+    trials: list[dict], expect_refuse: bool, question: str
+) -> dict:
+    """把同一道题的 N 次重复采样聚合成一条记录（纯函数，便于单测）。
+
+    为什么需要它（README §15.20）：refusal 段原本是**单次采样**，而边界题的
+    LLM `INSUFFICIENT_CONTEXT` 判定会抖（实测 `如何申请退款？` 6 次只拒答 2 次），
+    于是 `fp`/`fn` 天然带 ±1 噪声，跨版本比较不可靠。
+
+    多数票规则：`refuse_rate >= 0.5` 记为"拒答"（N 为偶数时 50/50 平票算拒答，
+    取保守侧）。`stable` 表示 N 次结论完全一致；只有 stable=False 的题才需要人工看。
+    """
+    n = len(trials)
+    n_ref = sum(1 for t in trials if t["refused"])
+    rate = (n_ref / n) if n else 0.0
+    buckets: dict[str, int] = {}
+    for t in trials:
+        if t["refused"]:
+            b = t["bucket"]
+            buckets[b] = buckets.get(b, 0) + 1
+    return {
+        "question": question,
+        "expect_refuse": expect_refuse,
+        "n_trials": n,
+        "n_refused": n_ref,
+        "refuse_rate": rate,
+        "stable": rate in (0.0, 1.0),
+        "decision_refused": rate >= 0.5,
+        "buckets": buckets,
+    }
+
+
+def eval_refusal(pipeline, items: list[dict], repeat: int = 1) -> dict:
     """拒答混淆矩阵：拒答题该拒（TP），可答题不该拒（TN）。
-    P2：把拒答原因按规则拆分统计，便于看出"主要是哪条路径在工作"。"""
+
+    `repeat > 1` 时每道题采样 N 次并按多数票定夺，同时列出不稳定题
+    （见 `aggregate_refusal_trials` 的 docstring）。
+    注意：`by_rule` 统计的是**采样次数**（repeat=1 时等于题目数）。
+    """
     tp = tn = fp = fn = 0
     by_rule: dict[str, int] = {}
     details = []
+    unstable = []
     for it in items:
-        ans = pipeline.ask(it["question"])
         expect = bool(it.get("expect_refuse"))
-        if expect and ans.refused:
+        trials = []
+        for _ in range(repeat):
+            ans = pipeline.ask(it["question"])
+            trials.append({
+                "refused": ans.refused,
+                "bucket": _refusal_bucket(ans.refusal_reason) if ans.refused else None,
+                "reason": ans.refusal_reason,
+            })
+        agg = aggregate_refusal_trials(trials, expect, it["question"])
+        refused = agg["decision_refused"]
+        if expect and refused:
             tp += 1
-        elif expect and not ans.refused:
+        elif expect and not refused:
             fn += 1
-        elif not expect and not ans.refused:
+        elif not expect and not refused:
             tn += 1
         else:
             fp += 1
-        if ans.refused:
-            bucket = _refusal_bucket(ans.refusal_reason)
-            by_rule[bucket] = by_rule.get(bucket, 0) + 1
-        details.append({
-            "question": it["question"],
-            "expect_refuse": expect,
-            "refused": ans.refused,
-            "bucket": _refusal_bucket(ans.refusal_reason) if ans.refused else None,
-            "reason": ans.refusal_reason,
-        })
-    return {"tp": tp, "tn": tn, "fp": fp, "fn": fn, "by_rule": by_rule, "details": details}
+        for b, c in agg["buckets"].items():
+            by_rule[b] = by_rule.get(b, 0) + c
+        if not agg["stable"]:
+            unstable.append(agg)
+        details.append({**agg, "refused": refused})
+    return {
+        "tp": tp, "tn": tn, "fp": fp, "fn": fn,
+        "by_rule": by_rule,
+        "n_trials_per_question": repeat,
+        "unstable_count": len(unstable),
+        "unstable": unstable,
+        "details": details,
+    }
 
 
 def eval_injection(pipeline, injection_dir: Path) -> dict:
@@ -195,7 +243,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--injection-dir", default="eval/injection")
     parser.add_argument("--mode", choices=["retrieval", "refusal", "injection", "all"],
                         default="all")
+    parser.add_argument(
+        "--repeat", type=int, default=1,
+        help="refusal 段每题的采样次数（>1 时按多数票并列出不稳定题；见 README §15.20）",
+    )
     args = parser.parse_args(argv)
+    if args.repeat < 1:
+        parser.error("--repeat 必须 >= 1")
 
     pipeline = build_pipeline(args.env)
     items = load_qa(Path(args.qa))
@@ -206,10 +260,18 @@ def main(argv: list[str] | None = None) -> int:
         r = report["retrieval"]
         print(f"[retrieval] n={r['n']}  recall@10={r['recall@10']:.3f}  mrr@10={r['mrr@10']:.3f}")
     if args.mode in ("refusal", "all"):
-        report["refusal"] = eval_refusal(pipeline, items)
+        report["refusal"] = eval_refusal(pipeline, items, repeat=args.repeat)
         r = report["refusal"]
         rules = " ".join(f"{k}={v}" for k, v in sorted(r["by_rule"].items()))
-        print(f"[refusal] tp={r['tp']} tn={r['tn']} fp={r['fp']} fn={r['fn']}  by_rule: {rules}")
+        suffix = f"  (每题采样 {args.repeat} 次)" if args.repeat > 1 else ""
+        print(f"[refusal] tp={r['tp']} tn={r['tn']} fp={r['fp']} fn={r['fn']}  "
+              f"by_rule: {rules}{suffix}")
+        if r["unstable_count"]:
+            print(f"  ⚠️ {r['unstable_count']} 道题在 {args.repeat} 次采样中结论不一致"
+                  f"（这些题的 tp/tn 不可作为回归判据）:")
+            for u in r["unstable"]:
+                print(f"     refuse_rate={u['refuse_rate']:.2f} "
+                      f"({u['n_refused']}/{u['n_trials']})  {u['question']}")
     if args.mode in ("injection", "all"):
         report["injection"] = eval_injection(pipeline, Path(args.injection_dir))
         r = report["injection"]
