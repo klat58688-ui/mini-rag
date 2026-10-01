@@ -587,7 +587,7 @@ eval_retrieval 需要金标准 chunk 标注才能算 recall，eval 集创建以�
 - eval.run_eval --mode all：retrieval recall@10=0.000（qa.jsonl gold_chunk_ids 全空，§15.10 已声明为生活事实）、refusal tp=2 tn=4 fp=1 fn=0、injection 攻击 0% / intercept 100% / corpus_flagger 1/9
 
 #### 后续工作（**不阻塞发布**）
-- qa.jsonl 的 `gold_chunk_ids` 手工标注（用户已认领此工作）
+- qa.jsonl 的 `gold_chunk_ids` 手工标注（用户已认领此工作）→ **已完成**，见 §15.13（标注 + 差旅漏洞修复）与 §15.14（扩容到 19 题）
 - 阈值随语料扩展复测
 - 更主动的注入攻击样本
 
@@ -634,4 +634,45 @@ eval_retrieval 需要金标准 chunk 标注才能算 recall，eval 集创建以�
 `/eval` 链路从"测评指标空转"变成"每跑一次都有真实信号"。
 **recall@10=1.000 不是终点，是新基线**——后续若改 embedding 模型 / 换阈值 / 调 chunker，
 都以这条曲线为参照。
+
+---
+
+### 15.14 发布后第 2 项收尾：qa.jsonl 扩容（7 → 19 题）与基线刷新（2026-10-01）
+
+§15.12 遗留项里写"qa.jsonl 覆盖面偏薄"（当时 5 可答 + 2 拒答）。本轮把它扩到
+**14 可答 + 5 拒答 = 19 题**，并在扩容后的数据集上重跑三段评测。
+
+#### 扩容内容
+- 可答题 5 → 14，新增：
+  - FAQ 侧：`退款需要满足什么条件`、`发票信息填错了怎么办`、`餐饮补贴标准是多少`
+  - 错误码侧：`ERR_2077 是什么错误`、`ERR_3310 是什么意思`
+  - 术语侧：`BM25 / Chunk / RRF / Embedding` 四题（原只有 `RAG` 一题）
+- 拒答题 2 → 5，新增：`今天的天气怎么样`（域外闲聊）、`如何申请退款`、`怎么重置登录密码`
+
+#### 标注方法
+复用 `scripts/suggest_gold_ids.py`（RRF 融合 top-N 候选打印）＋ 逐条回语料核对。
+19 条 gold 全部指向现行 11 个 chunk 中的真实 id；`glossary.txt` 5 个术语共用
+`fdf5058a63666051`，原因见下"诚实边界"。
+
+#### 实测（真实 bge-large-zh-v1.5 1024 dim + kimi-k3）
+- retrieval：**n=14 recall@10=1.000 mrr@10=0.964**
+  （唯一非 top-1：`退款需要满足什么条件？` 命中 rank 2，top-1 是语义邻接的 `退款多久到账`）
+- refusal：**tp=5 tn=14 fp=0 fn=0**；`by_rule: llm_insufficient_context=4, low_cosine=1`
+  （`今天的天气` 离全部语料最远，命中低 cosine 硬门控；其余 4 题由 LLM 的 INSUFFICIENT_CONTEXT 拦下）
+- injection：5/5 拦截、攻击成功率 0%、corpus_flagger 1/11（与 §15.13 一致，未回归）
+- pytest：**58/58 通过**
+
+#### 值得记一笔：`如何申请退款` 的标注判断
+语料里有"退款多久到账"和"退款需要什么条件"，但**没有任何 chunk 描述"申请退款的入口/流程"**。
+所以这道题标 `expect_refuse=true` 是成立的——实测也确实由 `llm_insufficient_context` 拒答，
+说明 LLM 能区分"有退款政策事实"和"有退款操作步骤"这两种不同问题。这是一条真实的细粒度信号。
+
+#### 诚实边界
+- **`glossary.txt` 无标题 → 整篇切 1 chunk**，因此 5 个术语题共用同一个 gold id。
+  这是 chunker 粒度的直接后果，不是标注偷懒；若需要术语级 gold，得先给 glossary 加 heading
+  或换 chunker，届时 gold id 会随之变化。
+- **19 题仍属小样本**，`fp=0/fn=0` 只说明"在这 19 题上成立"，不代表生产分布下的拒答准确率。
+- **mrr@10 从 1.000 降到 0.964 是新题带来的真实信号**（旧 5 题仍全部 top-1），
+  不是回归；`退款条件` vs `退款到账` 属同一 FAQ 章节内的语义邻接，属可接受的 near-miss。
+- 本轮只改 `eval/qa.jsonl` 与本文档，**未动任何检索/门控代码**，也未重灌索引（chunk 数仍 11）。
 
