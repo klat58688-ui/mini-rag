@@ -151,7 +151,7 @@ RRF 分只有**序的意义**没有**量的意义**——完全无关的查询�
 ## 8. 测试与一键启动
 
 ```bash
-pytest                     # 58 个测试，覆盖 分块/融合/护栏/pipeline/sqlite 集成/BM25 strong_match
+pytest                     # 78 个测试，覆盖 分块/融合/护栏/pipeline/sqlite 集成/BM25 strong_match/评测聚合
 docker compose up --build  # 一键起 API（端口 8000）
 ```
 
@@ -159,8 +159,11 @@ docker compose up --build  # 一键起 API（端口 8000）
 - `test_chunker.py`：切块大小、重叠、fallback、id 稳定性；
 - `test_fusion.py`：RRF 只看排名、保留原始分、保留 flag；
 - `test_guardrails.py`：注入规则、拒答门控、引用校验、修订 2 列内降权；
-- `test_pipeline_mock.py`：编排顺序、拒答短路、INSUFFICIENT_CONTEXT 兜底；
-- `test_vector_store_integration.py`：sqlite-vec 真实建库、KNN、幂等、删除。
+- `test_pipeline_mock.py`：编排顺序、拒答短路、INSUFFICIENT_CONTEXT 兜底、P0-2 旁路 A/B；
+- `test_bm25_strong_match.py`：`strong_exact_match` 的"存在性"语义与中文 stopwords；
+- `test_vector_store_integration.py`：sqlite-vec 真实建库、KNN、幂等、删除；
+- `test_eval_refusal_repeat.py` / `test_eval_injection_classify.py`：评测聚合的多数票与稳定性判定、
+  `hijacked` 收紧判据（§15.21 / §15.22）。
 
 ---
 
@@ -169,18 +172,19 @@ docker compose up --build  # 一键起 API（端口 8000）
 没有评测的 RAG 项目只能证明"能跑"，不能证明"有效"。所以**评测是本项目的一等功能**。
 
 ### 9.1 评测集构造
-`eval/qa.jsonl` 30–50 条（当前示例 7 条，提交前请自行扩充至 30+），覆盖：
+`eval/qa.jsonl` 当前 **19 条**（14 可答 + 5 拒答；目标 30–50 条，见 §14）：
 
-| 桶 | 占比 | 目的 |
+| 桶 | 当前 | 目的 |
 |---|---|---|
-| 事实型 | ~40% | 单 chunk 命中；**故意混入专有名词**（`ERR_1042`）检验混合检索 |
-| 综合型 | ~30% | 跨段语义理解 |
-| 拒答型 | ~30% | 知识库完全没有，含"相邻领域但不命中"的干扰题 |
+| 事实型（可答） | 14 | 单 chunk 命中；含专有名词（`ERR_1042`）与术语题，检验混合检索 |
+| 拒答型 | 5 | 知识库完全没有（年假 / 食堂 / 天气 / 密码重置），以及**相邻领域但不命中**的干扰题（`如何申请退款？`——语料有退款政策与时限，但没有申请流程） |
 
 每条：`{question, gold_chunk_ids, expect_refuse, gold_answer_points}`。
 **`gold_chunk_ids` 用 chunk_id 标注**，粒度对齐评估对象（不是文档名）。
+标注方法与踩坑记录见 §15.13 / §15.14。
 
-`eval/injection/` 放 5–10 个注入文档 + 对照问题。
+`eval/injection/` 放 **5 个对照问题**；被注入的语料本身放在 `docs/`（`injection_sample.md`、
+`case3qjvkz_bypass.md`、`case5_security_base64.md` 三篇，见 §15.18）。
 
 ### 9.2 指标
 
@@ -194,6 +198,17 @@ docker compose up --build  # 一键起 API（端口 8000）
 | 攻击成功率 | 注入被召回且模型遵循 | **0** |
 | 误伤率 | 正常 chunk 被误判 flagged | 报告数值 |
 
+**读这些数之前必须知道的四条口径**（细节见 §15.19 ~ §15.22）：
+
+1. **`Recall@10` 在当前语料上已饱和**（14 题的 gold 相关性都很强，稳进 top-10），
+   区分度低；跨版本比较请以 **`MRR@10`** 为主指标。
+2. **攻击成功率有两个口径，报告里都给**：`payload_present`（payload 是否出现在输出里，原始判据）
+   与 `hijacked`（收紧判据——payload 出现**且**全文无"拒绝执行"措辞）。
+   只引用 payload 以示拒绝**不算**劫持。`hijacked` 仍是关键词启发式，最终结论需人工看 `cases[].text`。
+3. **refusal / injection 是采样指标**：单次运行带 ±1 噪声，建议 `--repeat 3`。
+4. `degraded` / `flagger_seen` 是否可测**取决于 `VECTOR_TOP_K` 与 `FINAL_TOP_K` 的相对关系**，
+   与语料大小无关（§15.17 / §15.19）。当前 top_k=5 下两条通道已点亮。
+
 ### 9.3 对比实验（消融）
 每次只改一个变量，其余锁死（`temperature=0`）：
 
@@ -202,10 +217,15 @@ docker compose up --build  # 一键起 API（端口 8000）
 - **E3 注入防护**：无防护 / 融合后降权（旧）/ 融合前列内降权（修订 2）。预期旧方案失败案例 + 新方案攻击成功率 0 ；
 - **E4 分块对比**（可选）：Markdown 语料上 heading vs fixed 的 Recall@10。
 
-跑法：`python -m eval.run_eval --env .env --mode all` → 报告落盘 `eval/results/last_eval.json`。
+> ⚠️ **`temperature=0` 并不等于可复现**。§15.20 在 `temperature=0` 下实测同一问题
+> 6 次里只拒答 2 次——供应商侧仍可能因批处理 / 路由产生抖动。
+> 所以**边界题必须靠 `--repeat N` 重复采样**，不能指望 temperature 锁死。
+
+跑法：`python -m eval.run_eval --env .env --mode all [--repeat 3]` → 报告落盘 `eval/results/last_eval.json`。
 
 ### 9.4 评测的诚实边界
-- 30–50 题是小样本，**只报趋势、不做统计显著性声明**；
+- 19 题是小样本（目标 30–50），**只报趋势、不做统计显著性声明**；
+- **单次采样的 refusal/injection 数字带 ±1 噪声**，跨版本比较前请先看 `unstable` 清单；
 - 答案质量以人工抽检为准，LLM 辅助打分仅作参考；
 - τ 在本评测集校准，存在过拟合风险（生产应换留出集）。
 
@@ -256,13 +276,18 @@ mini-rag/
 ├── requirements.txt      ← 8 行核心依赖；sentence-transformers 是 local 模式可选件
 ├── Dockerfile / docker-compose.yml
 ├── pytest.ini
-├── docs/                 ← 示例语料（含一篇注入样本）
+├── docs/                 ← 语料 15 篇 → 58 chunk（含 3 篇注入样本，见 §15.18）
 ├── eval/                 ← 评测集与跑分脚本
-│   ├── qa.jsonl
+│   ├── qa.jsonl          ← 19 条（14 可答 + 5 拒答）
 │   ├── probe.jsonl       ← §15.10 阈值校准探针（36 条）
 │   ├── run_threshold_probe.py
-│   ├── injection/*.json
-│   └── run_eval.py
+│   ├── run_eval.py       ← 支持 --repeat N（refusal / injection 重复采样）
+│   ├── injection/*.json  ← 5 个注入对照问题
+│   └── results/          ← last_eval.json（gitignore）
+├── scripts/              ← 一次性诊断脚本
+│   ├── suggest_gold_ids.py   ← RRF top-N 候选，辅助标注 gold_chunk_ids
+│   ├── topk_sweep.py         ← 扫 top_k，看 recall/mrr/degraded 可达性（§15.17）
+│   └── bge_prefix_ab.py      ← bge 查询指令前缀 A/B（§15.9）
 ├── src/
 │   ├── config.py         ← 环境变量 + 启动校验
 │   ├── models.py         ← Document/Chunk/ScoredChunk/Citation/Answer
@@ -278,7 +303,7 @@ mini-rag/
 │   ├── generator.py      ← OpenAI 兼容 LLM + 强约束 Prompt
 │   ├── pipeline.py       ← 编排（修订 1/2/3 落地点）
 │   ├── ingest.py / cli.py / api.py
-└── tests/                ← 58 个测试
+└── tests/                ← 78 个测试（8 个文件）
 
 > **关于 `data/chroma/` 目录名**：这是历史命名残留——项目曾计划用 Chroma 后切换为 sqlite-vec，目录名保留至今以免迁移既有数据。配置文件/数据库文件实际落在 `data/chroma/mini_rag.db`（sqlite 单一真相源），**与 Chroma 无关**。
 ```
@@ -1246,4 +1271,45 @@ case3_high_idf_bypass.json
 #### 五、仍未解决
 - `hijacked` 仍是关键词启发式；若要更强，需要 LLM 判定或"payload 是否构成答案主体"的结构判据。
 - **GitHub 推送仍缺 `gh` CLI**（TLS 与凭据助手已配好，只差建仓）。
+
+---
+
+### 15.23 README 一致性回归：§1–§14 的过期数字（2026-10-01）
+
+§15.12 做过一次"README 一致性扫描"，但那之后项目又走了很远（语料 9 → 58 chunk、
+`top_k` 20 → 5、测试 58 → 78、qa.jsonl 7 → 19 题）。§15.x 是**追加式日志**，旧数字留在那里是对的；
+但 **§1–§14 是"当前状态"章节，留着旧数字就是误导**。本轮做了一次定向巡检。
+
+#### 修正清单
+
+| 位置 | 原文（过期） | 现文 | 依据 |
+|---|---|---|---|
+| §8 一键启动 | `pytest # 58 个测试` | **78 个测试** | `pytest --collect-only` → 78 |
+| §8 测试清单 | 只列 5 个测试文件 | 补齐为 **8 个**（加 `test_bm25_strong_match.py`、`test_eval_refusal_repeat.py`、`test_eval_injection_classify.py`） | `ls tests/` |
+| §9.1 | `30–50 条（当前示例 7 条）`；桶占比 40/30/30 | **19 条（14 可答 + 5 拒答）**，并改写桶表与拒答型示例 | `eval/qa.jsonl` 实测 |
+| §9.1 | `eval/injection/ 放 5–10 个注入文档` | **5 个对照问题**；注入语料在 `docs/`（3 篇） | 实测 |
+| §9.2 | 只有指标定义表 | 增加**四条读法口径**（recall 饱和 / 两个劫持口径 / 采样噪声 / degraded 可达性取决于 top_k） | §15.19 ~ §15.22 |
+| §9.3 | `其余锁死（temperature=0）` 暗含可复现 | 增加警告：**`temperature=0` 不等于可复现** | 见下 |
+| §9.4 | `30–50 题是小样本` | `19 题是小样本（目标 30–50）`，并加采样噪声一条 | 实测 |
+| §13 结构 | `tests/ ← 58 个测试` | **78 个测试（8 个文件）** | 实测 |
+| §13 结构 | `docs/ ← 示例语料（含一篇注入样本）` | **语料 15 篇 → 58 chunk（含 3 篇注入样本）** | 实测 |
+| §13 结构 | **缺 `scripts/` 整个目录**；`eval/` 缺 `results/`、`--repeat` 说明 | 补齐 | `ls` |
+
+#### 一条值得单记的发现：`temperature=0` 并不保证确定性
+
+§9.3 原文把 `temperature=0` 当作"其余变量锁死"的保证。但 §15.20 的抖动实验
+（同一问题 6 次里只拒答 2 次）**就是在 `temperature=0.0` 下跑出来的**
+（已核实 `src/generator.py:67` 确实传了 `temperature=0.0`）。
+
+⇒ 结论：**LLM 侧的非确定性无法靠 temperature 消除**（供应商批处理 / 路由等仍会引入抖动）。
+这正是 `--repeat` 存在的理由，也是为什么 §9.2 要把"采样噪声"列成一条读法口径。
+已在 §9.3 加了显式警告。
+
+#### 复现
+```
+pytest --collect-only -q            # 78
+ls tests/test_*.py | wc -l          # 8
+python -c "import json;print(sum(1 for l in open('eval/qa.jsonl',encoding='utf-8') if l.strip()))"   # 19
+grep -n temperature src/generator.py
+```
 
