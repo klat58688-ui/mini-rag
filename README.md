@@ -1762,6 +1762,11 @@ python scripts/topk_sweep.py --ks 5 --final-ks 3 5 6 8 10        # 看丢弃 gol
 | CI | 无 | **GitHub Actions，py3.12 + 3.13** |
 | 干净环境冒烟 | **未做过**（§15.12 明确承认） | **已做：无 `.env` 下 108/108** |
 
+**CI 首跑结果（不是"配好了"，是"跑绿了"）**：commit `9d4e523` 触发
+[run #1](https://github.com/klat58688-ui/mini-rag/actions/runs/36845091087)，
+`test (3.12)` 与 `test (3.13)` **两个 job 全部步骤 success**——
+在干净的 Ubuntu runner 上、无任何密钥、只靠 `pip install -r requirements.txt` 就跑通了 108 个测试。
+
 §15.12 曾把"真实 embedding / LLM 冒烟"列为未做项。本轮做掉的是**更基础的那一半**——
 "干净环境能否装起来并跑通测试"——而且现在由 CI 持续保证，不再是靠人工记住要跑。
 
