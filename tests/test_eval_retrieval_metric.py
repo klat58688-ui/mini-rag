@@ -40,6 +40,11 @@ class _Pipe:
     def _per_list_penalize(self, hits):
         return hits
 
+    def _maybe_hop2_fused(self, query, fused):
+        # §15.31 新增：eval_retrieval 与生产路径同源时会调用此 hook。
+        # 本 stub 只想测"覆盖率指标怎么算"，不想测"二跳怎么补"，所以恒等返回。
+        return fused
+
 
 def _q(question, gold, expect_refuse=False):
     return {"question": question, "gold_chunk_ids": list(gold),

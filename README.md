@@ -68,7 +68,7 @@
 12. [已知"难点点名"](#12-已知难点点名)
 13. [项目结构](#13-项目结构)
 14. [如果给我更多时间，会……](#14-如果给我更多时间会)
-15. [边界与口径（审计日志 §15.1–§15.30）](#15-边界与口径审查轮补)
+15. [边界与口径（审计日志 §15.1–§15.31）](#15-边界与口径审查轮补)
 
 ---
 
@@ -1976,6 +1976,157 @@ hijacked = payload_present  ∧  ¬declined  ∧  (mass ≥ 0.5  ∨  is_answer_
 ```
 pytest tests/test_eval_injection_classify.py -v     # 15 条判据防回归
 python -m eval.run_eval --env .env --mode injection --repeat 3
+```
+
+### 15.31 链式多跳的"简称缺口"：一次只做**查询扩展**的第二跳（2026-10-02）
+
+#### 一、动机：先把"多跳"分成两种，别一上来就喊"要 LLM 推理"
+
+§15.26 加进 14 道多 gold 题后，baseline retrieval（`recall@10 = 0.995`、65 题 1 道失败）
+让人误以为"多跳基本都解决了"。把这个失败案例拆开看才发现它跟其余 13 道**不是一种**：
+
+| 类型 | 数量 | 问句形态 | 单跳够不够 |
+|---|---|---|---|
+| 并列型 | 13 | "A 和 B 各是多少"——两个主题词**都在 query 里** | 够：vector 和 BM25 各拉一块，RRF 一合并就齐 |
+| 链式 | 1 | "一共多少 / 加起来"——其中一个主题**是简称**（"餐补"） | 不够：语料只用全称"餐饮补贴"，字面和语义都缺一段 |
+
+要命的是，**语料里"餐饮补贴"这四个字只出现在 `### 餐饮补贴标准` 的 heading 里**，
+§15.25 已经发现 heading 不进 chunk text（只进 heading_path 元数据）——
+所以正文 chunk 里**一次都没出现过**这四个字。这不是参数能调出来的缺口，
+是 query 与 chunk 之间一个本质的词形 / 语义断层。
+
+具体证据（基线、改 hop2 之前的 top10）：
+
+| 问句 | gold_chunk_ids | 覆盖 | 缺失的块 |
+|---|---|---|---|
+| 在北京出差住 3 晚，住宿加餐补一共能报多少？ | 3 个（住宿上限 / 一线 20% / 餐饮补贴） | 2/3 | `01f3549f2a2704ac`（"餐饮补贴按自然日计，每天 80 元"） |
+
+缺失原因可复现地诊断：问句里只有"餐补"这个简称，
+`餐饮补贴` 四个字**在 chunk 正文里一次都没出现**（只在 heading），
+BM25 字面无匹配，向量也只搭到"补贴 / 报销"的近义而够不到这一块。
+
+#### 二、方案：查询局部扩展，不是 LLM-in-loop 的"真推理"
+
+先把诚实声明写在前头：
+
+> **这不是真正的"推理型多跳"**——不是"让 LLM 看第一跳答案、自己决定要不要再查"。
+> 它更像**查询局部扩展**（query relaxation）：在原 query 里发现"汇总意图 + 已知简称"，
+> 就把简称**就地替换成全称候选**，拿这个新 query 再做一次完全相同的双路召回，
+> 最后把两跳的 fused 列表再过一次 RRF。
+
+整条链路的形状：
+
+```
+query
+  └─ plan_hop2(query)              ← src/multihop.py，纯函数
+        │  汇总意图正则 ∧ 命中简称词典
+        ▼
+   expanded_query ("…餐补…" → "…餐饮补贴…" 等)
+        │
+        ┌─ hop1: 原 query → _dual_recall → penalize → fuse ─┐
+        │                                                    ├─ rrf_fuse 二次融合 → 最终进 LLM 的证据
+        └─ hop2: expanded_query → _dual_recall → penalize → fuse ─┘
+                ↑ src/pipeline.py  _maybe_hop2_fused(query, hop1_fused)
+```
+
+三个关键工程决策：
+
+1. **融合必须用 `rrf_fuse` 再过一次，不能拼接。**
+   拼接会让 hop1 的顺序把 hop2 的新块死死压在后面；RRF 用倒数排名让两边的新块按真实分数公平竞争。
+2. **`_per_list_penalize` 必须分别作用于两条 hop 的各自列内**，
+   不能只 penalize hop1——否则 hop1 干净 + hop2 被注入时可以绕过 flagged 限额。
+3. **`_maybe_hop2_fused` 只在门控通过之后才走**。
+   拒答题去补第二跳是浪费资源；所以 `ask()` 里它放在 `if refuse: return` 之后、
+   `contexts = fused[:...]` 之前。**评测与生产同源**：
+   `eval/run_eval.py` 的 `eval_retrieval` 也调用同一个方法（否则测的是"单跳成绩"，
+   不是 `ask()` 实际送给 LLM 的证据）。
+
+简称词典目前 5 条（`餐补 / 房补 / 车补 / 差旅费 / 年终奖`），
+登账式维护，**不**试图做成自动抽取——这个项目里自动抽取的精度代价远大于覆盖收益。
+
+#### 三、为什么没做"加金额语境词"那一层：一次删掉的死代码
+
+最初版本里 `_AGGREGATE_RE` 之外还有一层 `_MONEY_CONTEXT`
+（"汇总意图 ∧ 简称命中 ∧ 语境含金额词"才触发），
+理由是"防止 '1 加 1 一共' 这种纯数学表达误触发"。
+
+测试写的是 `test_intent_with_abbreviation_but_no_money_still_expands`——
+北京出差题里"餐补"本身就是金额词汇，但**不在**我列的 `_MONEY_CONTEXT` 表（`["报销","多少","钱","元"]`）里，
+结果第一轮这条用例直接 FAIL。
+
+那一瞬间想清楚了：**这张扩展表本身天然就是金额词典的邻近语义**——
+表里每一个简称（"餐补 / 房补 / 车补 / …"）在现实中文里**几乎只在涉及金额的语境里出现**。
+"1 加 1 一共" 这种数学表达**压根不会命中扩展表**，
+所以"金额语境"那道过滤是基于想象的风险，不是真实的风险。
+
+处理：**整个 `_MONEY_CONTEXT` / `_has_money_context` 删掉**，
+对应测试一并删除，删除理由写进 [src/multihop.py](src/multihop.py) 的 docstring。
+留下的判断逻辑因此只有一行话：**`汇总意图正则 ∧ 命中简称 → replace 一次`**。
+
+#### 四、测试规模与覆盖
+
+| 层 | 文件 | 用例数 | 新增/修改 |
+|---|---|---|---|
+| `plan_hop2` 纯函数 | [tests/test_multihop.py](tests/test_multihop.py) | 8 | 新增 |
+| `merge_hop_results` 融合 | 同上 | 2 | 新增 |
+| `RAGPipeline._maybe_hop2_fused` 集成 | 同上 | 3 | 新增 |
+| `eval_retrieval` 接入 hop2 | [tests/test_eval_retrieval_metric.py](tests/test_eval_retrieval_metric.py) | — | mock 加 identity 实现 |
+| 全套 | `pytest` | **131 / 131 全绿** | 118 → 131 |
+
+值得说的一点：改 `eval/run_eval.py` 让 `eval_retrieval` 调 `_maybe_hop2_fused` 时，
+10 条原本测指标的用例集体 `AttributeError`——它们的 `_Pipe` mock 没这个方法。
+**修法不是给生产代码加 `getattr` 特判**，而是给 `_Pipe` mock 加 identity 空实现
+（恒等返回 `fused`）：**接口缺失是 mock 的责任**，生产代码应该假设接口存在。
+这个原则顺手记录，下次再遇到同类问题不用犹豫。
+
+#### 五、真实系统验证：1 道失败题的修复证据 + 全量零回归
+
+```
+$env:EMBEDDING_PROVIDER="local"; $env:EMBEDDING_DIM="1024"
+python -m eval.run_eval --env .env --mode retrieval --skip-unanswerable 2>$null
+# [retrieval] n=65  recall@10: 1.000  hit@10: 1.000  mrr@10: 0.958
+# WARNINGS: 0
+```
+
+对比维度：
+
+| 指标 | 基线（§15.30 提交时） | §15.31 提交时 | Δ |
+|---|---|---|---|
+| `recall@10` | 0.995 | **1.000** | +0.005 |
+| `hit@10` | 1.000 | 1.000 | 0 |
+| `mrr@10` | 0.958 | 0.958 | 0 |
+| "多 gold 未全覆盖"警告 | 1 条 | **0 条** | −1 |
+
+北京出差题的 top10 明细（hop2 触发后）：
+
+| 名次 | chunk_id | 来自哪一跳 |
+|---|---|---|
+| 1, 2 | 住宿上限 + 一线 20% 那两块 | hop1 |
+| **8** | **`01f3549f2a2704ac`（"餐饮补贴按自然日计，每天 80 元"）** | **hop2** ← 之前掉出 top10 的那一块 |
+| 其余 | 其他差旅 / 审批 / 发票相关 | hop1 |
+
+3 个 gold 全覆盖；其余 13 道并列型多跳题排名与分数**逐位不变**；
+51 道单 gold 题**全部不变**——hop2 只在汇总意图且命中简称时才追加一次召回，
+对其它 64 题是完全的 no-op。
+
+#### 六、仍未解决 / 诚实声明
+
+- **这不是推理型多跳**。真正的"让 LLM 决定下一跳查什么"仍然没做，
+  因为在这个语料规模下简称词典已经够用；真要上 LLM-in-loop，
+  得等到出现**词典穷举不到的断层**为止。
+- **已知边界**：如果 query 里已经出现全称（"餐饮补贴一共能报多少"），
+  `replace` 会命中已经写对的字符串产生**噪声 query**（测过，不崩溃，但会浪费一次召回）。
+  目前的策略是"不为此加复杂度"，因为这类 query 在 qa.jsonl 里 hop1 本来就能拿满。
+- **扩展表是登账制**：新增简称必须改 `_ABBREVIATION_EXPANSIONS` 并补对应测试，
+  没有任何自动学习机制。
+- `recall@10 = 1.000` 是这个语料 + 这个评测集下的饱和信号，**不是**系统在所有数据上完美的证据：
+  语料再大、评测再难，数字一定会回落。
+
+#### 复现
+```
+pytest -q                                                          # 131/131
+pytest tests/test_multihop.py -v                                   # 本节新增 13 条
+python -m eval.run_eval --env .env --mode retrieval --skip-unanswerable
 ```
 
 

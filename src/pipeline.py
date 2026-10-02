@@ -10,6 +10,7 @@ from __future__ import annotations
 from .config import AppConfig
 from .guardrails import should_refuse, validate_and_map_citations
 from .models import Answer, Citation, ScoredChunk
+from .multihop import merge_hop_results, plan_hop2
 from .retriever.bm25_store import BM25Store
 from .retriever.fusion import rrf_fuse
 from .retriever.vector_store import ChromaVectorStore
@@ -94,6 +95,27 @@ class RagPipeline:
             refusal_reason=reason,
         )
 
+    # ── 第二跳（§15.31，链式多跳的查询扩展层）─────────────
+    def _maybe_hop2_fused(
+        self, query: str, hop1_fused: list[ScoredChunk]
+    ) -> list[ScoredChunk]:
+        """若 plan_hop2 给出扩展 query，则补一次双路召回 + penalize + RRF，
+        再和第一跳 fused 过一次 RRF。否则原样返回 hop1_fused。
+
+        为什么放在门控之后、送 LLM 之前：
+        - 门控拒答时不需要补跳（减少一次 LLM 上下文噪音）。
+        - penalize 必须分别作用于两跳各自的列内，不能先合并再 penalize——
+          hop2 的 flagged 项也要按列内限额走（防 hop1 clean + hop2 注入挤进）。
+        """
+        plan = plan_hop2(query)
+        if not (plan.triggered and plan.expanded_query):
+            return hop1_fused
+        v2, b2 = self._dual_recall(plan.expanded_query)
+        v2 = self._per_list_penalize(v2)
+        b2 = self._per_list_penalize(b2)
+        hop2 = self._fuse(v2, b2)
+        return merge_hop_results(hop1_fused, hop2, rrf_fuse, self.cfg.rrf_k)
+
     # ── 对外入口 ─────────────────────────────────────────
     def ask(self, query: str) -> Answer:
         if not query or not query.strip():
@@ -109,6 +131,9 @@ class RagPipeline:
         fused = self._fuse(vector_hits, bm25_hits)
         if refuse:
             return self._build_refusal_answer(query, reason, fused)
+
+        # §15.31：链式多跳的查询扩展层（门控通过后才做）。
+        fused = self._maybe_hop2_fused(query, fused)
 
         contexts = fused[: self.cfg.final_top_k]
         llm_text = self.generator.generate(query, contexts)

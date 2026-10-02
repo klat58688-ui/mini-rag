@@ -63,6 +63,10 @@ def eval_retrieval(pipeline, items: list[dict], k: int = 10) -> dict:
         v = pipeline._per_list_penalize(v)
         b = pipeline._per_list_penalize(b)
         fused = rrf_fuse([v, b], k=pipeline.cfg.rrf_k)
+        # §15.31：retrieval 评测也要走第二跳（若触发），否则测出来的"单跳成绩"
+        # 不等于 ask()前送给 LLM 的真实证据集。注意：拿的是 pipeline 内的方法，
+        # 保证评测与生产路径一致；refusal 题不走到这里。
+        fused = pipeline._maybe_hop2_fused(it["question"], fused)
         top_ids = [c.chunk_id for c in fused[:k]]
         n += 1
 
