@@ -23,7 +23,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("role_override_zh", re.compile(r"你现在是(一个|一名|新的)")),
     ("system_tag_spoof", re.compile(r"<\s*/?\s*(system|s|assistant)\s*>", re.IGNORECASE)),
     ("jailbreak_dan", re.compile(r"\bDAN\b.*\bjailbreak\b", re.IGNORECASE)),
-    ("output_secret_zh", re.compile(r"(输出|泄露|给出)(你的)?(系统提 示词|prompt|密钥|api.?key)", re.IGNORECASE)),
+    ("output_secret_zh", re.compile(r"(输出|泄露|给出)(你的)?(系统提\s*示词|prompt|密钥|api.?key)", re.IGNORECASE)),
 ]
 
 _INVISIBLE_CHARS = re.compile(r"[\u200b\u200c\u200d\ufeff\u200e\u200f]")  # 零宽空格/ZWNJ/ZWJ/BOM/LRM/RLM，用转义写法避免源码中不可见字符被编辑器或工具链意外清除
