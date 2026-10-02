@@ -39,7 +39,7 @@ class TestInjectionDetection:
         assert "role_override_zh" in hits
 
     def test_invisible_chars(self):
-        hits = detect_injection("正常文字​藏了零宽")
+        hits = detect_injection("正常文字\u200b藏了零宽")
         assert "invisible_chars" in hits
 
     def test_clean_text_no_hits(self):

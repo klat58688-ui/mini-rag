@@ -5,9 +5,9 @@
 README §15.10/§15.11）。
 """
 
+from src.models import Chunk
 from src.retriever.bm25_store import BM25Store
 from src.retriever.tokenizer import rare_tokens
-from src.models import Chunk
 
 
 def _chunk(cid: str, text: str, flagged: bool = False) -> Chunk:

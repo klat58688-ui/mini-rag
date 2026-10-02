@@ -1,4 +1,4 @@
-"""评测入口：检索质量 + 拒答正确性 + 注入防护 + 对比消融。
+"""评测入口：检索质量 + 拒答正确性 + 注入防护 + 答案质量 + 对比消融。
 
 指标定义见 README 第 9 节，此处只做"趋势报告"，不做统计显著性声明。
 
@@ -6,6 +6,7 @@
   python -m eval.run_eval --env .env --mode retrieval
   python -m eval.run_eval --env .env --mode refusal
   python -m eval.run_eval --env .env --mode injection
+  python -m eval.run_eval --env .env --mode answer
   python -m eval.run_eval --env .env --mode all
 """
 
@@ -203,6 +204,114 @@ def eval_refusal(pipeline, items: list[dict], repeat: int = 1) -> dict:
     }
 
 
+def citation_precision(cited_ids: list[str], gold: set[str]) -> float | None:
+    """单题引用精度：被引 chunk 中落在该题 gold 集合内的比例（纯函数，便于单测）。
+
+    返回 None 表示"无引用可评"——答案一个 [n] 都没给时精度未定义，
+    由调用方单独计数（可答题不给引用本身就是格式契约被破坏的信号）。
+    分母是**引用条数**而非去重集合：同一 chunk 被引两次且都在 gold 内，
+    两次都算对——每条引用都是一次独立的"证据声明"。
+    """
+    if not cited_ids:
+        return None
+    return sum(1 for cid in cited_ids if cid in gold) / len(cited_ids)
+
+
+def answer_point_coverage(text: str, points: list[str]) -> float | None:
+    """单题答案要点覆盖：gold_answer_points 以**子串**形式出现在答案中的比例。
+
+    这是最廉价的"答案内容对不对"代理（README §15.32）——只看字面命中、
+    不看语义，因此是**下界估计**：同义改写（"3 天" vs "3 个工作日"）会算漏。
+    它不能证明答案对，但能快速暴露"检索对了、答案却没用到点上"。
+    返回 None 表示该题未标注要点。
+    """
+    if not points:
+        return None
+    return sum(1 for p in points if p in text) / len(points)
+
+
+def eval_answer(pipeline, items: list[dict]) -> dict:
+    """最终答案质量（廉价层，README §15.32）：引用精度 + 要点覆盖 + 拒答交叉表。
+
+    为什么需要它：recall@10=1.000 只能说明"证据送进了上下文"，不能说明答案
+    **用对了**证据。本模式对每道题（含拒答题）跑一次 `ask()`，纯本地统计：
+    - citation_precision：答案引用的每个 chunk 是否落在该题 gold 集合内
+      （引了无关块 = 检索噪声漏进了最终答案）；
+    - answer_point_coverage：标注要点有多少字面出现在答案文本里
+      （检索对但答非所问时它会掉下来）。
+
+    拒答交叉表口径与 eval_refusal 一致，但此处是**单次采样**的副产品——
+    回归判据仍以 `--mode refusal --repeat N` 为准；这里只为呈现"可答题被拒
+    （fp）会让答案质量的统计基数缩小多少"。
+    """
+    tp = tn = fp = fn = 0
+    prec_list: list[float] = []
+    cov_list: list[float] = []
+    cited_total = cited_hit = 0
+    points_total = points_hit = 0
+    n_no_citation = 0
+    details = []
+    for it in items:
+        expect = bool(it.get("expect_refuse"))
+        ans = pipeline.ask(it["question"])
+        if expect and ans.refused:
+            tp += 1
+        elif expect and not ans.refused:
+            fn += 1
+        elif not expect and not ans.refused:
+            tn += 1
+        else:
+            fp += 1
+        row = {
+            "question": it["question"],
+            "expect_refuse": expect,
+            "refused": ans.refused,
+            "cited_ids": [c.chunk_id for c in ans.citations],
+            "gold": list(it.get("gold_chunk_ids", [])),
+            "citation_precision": None,
+            "answer_point_coverage": None,
+        }
+        # 只有"可答且未拒答"的题才产出可评的答案；拒答题即使没拒（fn），
+        # 其引用也不算"用对证据"，只进交叉表
+        if not expect and not ans.refused:
+            gold = set(it.get("gold_chunk_ids", []))
+            p = citation_precision(row["cited_ids"], gold)
+            row["citation_precision"] = p
+            if p is None:
+                n_no_citation += 1
+            else:
+                prec_list.append(p)
+                cited_total += len(row["cited_ids"])
+                cited_hit += sum(1 for cid in row["cited_ids"] if cid in gold)
+            points = it.get("gold_answer_points", [])
+            cov = answer_point_coverage(ans.text, points)
+            row["answer_point_coverage"] = cov
+            if cov is not None:
+                cov_list.append(cov)
+                points_total += len(points)
+                points_hit += sum(1 for pt in points if pt in ans.text)
+        details.append(row)
+    return {
+        "n": len(items),
+        "refusal": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
+        # 引用精度给两条口径：macro 是每题均值（题题等权），micro 是
+        # 总命中/总引用（引用多的题权重大）；两者背离说明引用多少与质量相关。
+        "citation_precision": {
+            "n_scored": len(prec_list),
+            "macro": sum(prec_list) / len(prec_list) if prec_list else 0.0,
+            "micro": (cited_hit / cited_total) if cited_total else 0.0,
+            "n_no_citation": n_no_citation,
+            "n_refused_answerable": fp,
+        },
+        "answer_point_coverage": {
+            "n_scored": len(cov_list),
+            "macro": sum(cov_list) / len(cov_list) if cov_list else 0.0,
+            "micro": (points_hit / points_total) if points_total else 0.0,
+        },
+        "details": details,
+    }
+
+
 # 模型"明确拒绝执行"时常用的措辞。命中即认为它在**引用** payload 以示拒绝，
 # 而不是顺从——成因见 README §15.21。
 _DECLINE_MARKERS = (
@@ -324,6 +433,12 @@ def _payload_is_answer_core(text: str, target: str) -> bool:
     return False
 
 
+def _trial_majority(trials: list[dict], key: str) -> bool:
+    """多数票：命中数 >= 半数（含平票）记 True——取保守侧。"""
+    n = len(trials)
+    return sum(1 for t in trials if t[key]) * 2 >= n
+
+
 def eval_injection(pipeline, injection_dir: Path, repeat: int = 1) -> dict:
     """喂入带注入载荷的文档，验证回答未被挟持。
 
@@ -356,13 +471,10 @@ def eval_injection(pipeline, injection_dir: Path, repeat: int = 1) -> dict:
             })
         n = len(trials)
 
-        def _majority(key: str) -> bool:
-            return sum(1 for t in trials if t[key]) * 2 >= n
-
-        hijacked = _majority("hijacked")
-        refused = _majority("refused")
-        degraded = _majority("degraded")
-        flagged_seen = _majority("flagged_seen")
+        hijacked = _trial_majority(trials, "hijacked")
+        refused = _trial_majority(trials, "refused")
+        degraded = _trial_majority(trials, "degraded")
+        flagged_seen = _trial_majority(trials, "flagged_seen")
         row = {
             "case": path.name,
             "question": case["question"],
@@ -371,7 +483,7 @@ def eval_injection(pipeline, injection_dir: Path, repeat: int = 1) -> dict:
             "degraded": degraded,
             "flagger_seen_in_citations": flagged_seen,
             # 两个口径都给：payload_present 是原始信号，hijacked 是收紧后的判定
-            "payload_present": _majority("payload_present"),
+            "payload_present": _trial_majority(trials, "payload_present"),
             "payload_present_count": sum(1 for t in trials if t["payload_present"]),
             "hijacked": hijacked,
             "hijack_count": sum(1 for t in trials if t["hijacked"]),
@@ -410,7 +522,7 @@ def eval_injection(pipeline, injection_dir: Path, repeat: int = 1) -> dict:
             "flagged_chunks": flagged_total,
             "by_pattern": by_pattern,
         }
-    except Exception:
+    except Exception:  # noqa: BLE001 — 探测性统计，能力缺失时降级为 error 字段
         corpus_flagger = {"error": "vector_store 不支持 all_chunks"}
 
     return {
@@ -438,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env", default=".env")
     parser.add_argument("--qa", default="eval/qa.jsonl")
     parser.add_argument("--injection-dir", default="eval/injection")
-    parser.add_argument("--mode", choices=["retrieval", "refusal", "injection", "all"],
+    parser.add_argument("--mode", choices=["retrieval", "refusal", "injection",
+                                           "answer", "all"],
                         default="all")
     parser.add_argument(
         "--repeat", type=int, default=1,
@@ -505,6 +618,29 @@ def main(argv: list[str] | None = None) -> int:
                 f"  corpus_flagger: {cf['flagged_chunks']}/{cf['total_chunks']} chunks "
                 f"被标记  by_pattern={cf['by_pattern']}"
             )
+    if args.mode in ("answer", "all"):
+        # 注意：answer 段对每道题额外跑一次 ask()——mode=all 时 LLM 调用量翻倍。
+        # 只想要检索数字请用 --mode retrieval。
+        report["answer"] = eval_answer(pipeline, items)
+        r = report["answer"]
+        cp = r["citation_precision"]
+        cov = r["answer_point_coverage"]
+        rf = r["refusal"]
+        print(f"[answer] n={r['n']}  引用精度 macro={cp['macro']:.3f} "
+              f"micro={cp['micro']:.3f} (scored {cp['n_scored']})  "
+              f"要点覆盖 macro={cov['macro']:.3f} micro={cov['micro']:.3f} "
+              f"(scored {cov['n_scored']})")
+        print(f"  refusal(单次采样): tp={rf['tp']} tn={rf['tn']} fp={rf['fp']} "
+              f"fn={rf['fn']}  无引用回答={cp['n_no_citation']}  "
+              f"可答题被拒={cp['n_refused_answerable']}")
+        bad = [d for d in r["details"]
+               if d["citation_precision"] is not None and d["citation_precision"] < 1.0]
+        if bad:
+            print(f"  ⚠️ {len(bad)} 道题引用了 gold 之外的块（检索噪声漏进答案）:")
+            for d in bad:
+                extra = [c for c in d["cited_ids"] if c not in set(d["gold"])]
+                print(f"     精度 {d['citation_precision']:.2f}  多余引用 {extra}  "
+                      f"{d['question']}")
 
     out = Path("eval/results") / "last_eval.json"
     out.parent.mkdir(parents=True, exist_ok=True)

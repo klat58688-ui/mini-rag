@@ -13,21 +13,20 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
 
 from .models import Answer, Citation, ScoredChunk
 
 # ── 注入检测 ─────────────────────────────────────────────
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("ignore_instructions", re.compile(r"ignore (all )?(previous|prior|above) instructions?", re.I)),
+    ("ignore_instructions", re.compile(r"ignore (all )?(previous|prior|above) instructions?", re.IGNORECASE)),
     ("ignore_instructions_zh", re.compile(r"忽略(之前|以上|上述)(的)?(所有)?(指令|指示|命令)")),
     ("role_override_zh", re.compile(r"你现在是(一个|一名|新的)")),
-    ("system_tag_spoof", re.compile(r"<\s*/?\s*(system|s|assistant)\s*>", re.I)),
-    ("jailbreak_dan", re.compile(r"\bDAN\b.*\bjailbreak\b", re.I)),
-    ("output_secret_zh", re.compile(r"(输出|泄露|给出)(你的)?(系统提 示词|prompt|密钥|api.?key)", re.I)),
+    ("system_tag_spoof", re.compile(r"<\s*/?\s*(system|s|assistant)\s*>", re.IGNORECASE)),
+    ("jailbreak_dan", re.compile(r"\bDAN\b.*\bjailbreak\b", re.IGNORECASE)),
+    ("output_secret_zh", re.compile(r"(输出|泄露|给出)(你的)?(系统提 示词|prompt|密钥|api.?key)", re.IGNORECASE)),
 ]
 
-_INVISIBLE_CHARS = re.compile(r"[​‌‍﻿‎‏]")
+_INVISIBLE_CHARS = re.compile(r"[\u200b\u200c\u200d\ufeff\u200e\u200f]")  # 零宽空格/ZWNJ/ZWJ/BOM/LRM/RLM，用转义写法避免源码中不可见字符被编辑器或工具链意外清除
 
 # P0-2 旁路 C：自然语言里几乎不会出现的可疑特征（基于长度的启发式，
 # 不是密码学论证——宁误报不漏报，因被标不会删除只会降权）

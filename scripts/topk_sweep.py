@@ -35,15 +35,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.cli import build_pipeline  # noqa: E402
-from src.retriever.fusion import rrf_fuse  # noqa: E402
+from src.cli import build_pipeline
+from src.retriever.fusion import rrf_fuse
 
 
 def _load_jsonl(path: Path) -> list[dict]:
     return [
-        json.loads(l)
-        for l in path.read_text(encoding="utf-8").splitlines()
-        if l.strip()
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
     ]
 
 
@@ -152,8 +152,8 @@ def main() -> int:
         f"rrf_k={pipeline.cfg.rrf_k}  评测集: {len(items)} 条"
     )
     print(
-        f"degraded 可达条件（§15.16）: contexts 里出现 flagged chunk "
-        f"⇒ 需要候选池中的干净 chunk 数 < final_top_k"
+        "degraded 可达条件（§15.16）: contexts 里出现 flagged chunk "
+        "⇒ 需要候选池中的干净 chunk 数 < final_top_k"
     )
     print(
         "「丢弃 gold」= 已进融合池、但排在 final_top_k 之后没进上下文的 gold 个数（§15.27）"

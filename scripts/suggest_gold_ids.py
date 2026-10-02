@@ -24,8 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.cli import build_pipeline  # noqa: E402
-from src.retriever.fusion import rrf_fuse  # noqa: E402
+from src.cli import build_pipeline
+from src.retriever.fusion import rrf_fuse
 
 
 def main() -> int:
@@ -40,9 +40,9 @@ def main() -> int:
 
     qa_path = Path(args.qa)
     items = [
-        json.loads(l)
-        for l in qa_path.read_text(encoding="utf-8").splitlines()
-        if l.strip()
+        json.loads(line)
+        for line in qa_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
     ]
 
     for it in items:

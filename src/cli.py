@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as e:
         print(f"配置错误: {e}", file=sys.stderr)
         return 2
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 初始化失败的兜底出口码
         print(f"初始化失败: {e}", file=sys.stderr)
         return 2
 
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             ans = pipeline.ask(q)
             print_answer(ans)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 单问失败不退出 REPL
             print(f"查询失败: {e}", file=sys.stderr)
 
 

@@ -44,7 +44,7 @@ PREFIX = "为这个句子生成表示以用于检索相关文章："
 
 def cosine(a: list[float], b: list[float]) -> float:
     # normalize_embeddings=True 下向量已单位化，点积即 cosine。
-    return sum(x * y for x, y in zip(a, b))
+    return sum(x * y for x, y in zip(a, b, strict=True))
 
 
 def main() -> None:

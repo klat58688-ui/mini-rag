@@ -1,0 +1,18 @@
+target-version = "py313"
+
+[lint]
+# CI 门禁规则集（§15.32）。取舍原则：只卡"正确性/可维护性"信号，不卡行长与格式美学
+# （中文 docstring/注释普遍偏长，行长门禁对本仓库是噪音）。
+#   E4/E7/E9  pycodestyle 错误子集（语法与结构错误）
+#   F         pyflakes：未用导入/变量、未定义名
+#   I         import 排序——保证 diff 干净
+#   UP        pyupgrade：现代化语法（PEP 604 联合类型等）
+#   B         bugbear：真实 bug 模式（B023 闭包捕获循环变量等）
+#   SIM       可合并的嵌套分支
+#   BLE       盲 catch Exception——允许的边界必须显式 noqa 声明
+#   PIE/PLE   pylint 错误类（含 PLE2502/2515 不可见/双向 Unicode 字符——
+#             对做注入检测的本仓库是安全相关项）
+#   FURB      refurb 正确性项
+#   RUF100    失效的 noqa 注释（防"注释比规则活得久"）
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "BLE", "PIE", "PLE",
+          "FURB", "RUF100", "PLR0402"]

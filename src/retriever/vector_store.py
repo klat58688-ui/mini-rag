@@ -62,7 +62,7 @@ class ChromaVectorStore:
             return
         embeddings = self.embedder.embed([c.text for c in chunks])
         with self._conn:
-            for c, vec in zip(chunks, embeddings):
+            for c, vec in zip(chunks, embeddings, strict=True):
                 self._conn.execute(
                     """INSERT INTO chunks
                        (chunk_id, doc_id, doc_name, doc_path, chunk_index,
@@ -124,7 +124,7 @@ class ChromaVectorStore:
             for cid in old_ids:
                 self._conn.execute("DELETE FROM vec_chunks WHERE chunk_id=?", (cid,))
             self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
-            for c, vec in zip(chunks, embeddings):
+            for c, vec in zip(chunks, embeddings, strict=True):
                 self._conn.execute(
                     """INSERT INTO chunks
                        (chunk_id, doc_id, doc_name, doc_path, chunk_index,

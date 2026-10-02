@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -46,7 +45,7 @@ class Chunk:
         }
 
     @staticmethod
-    def from_store(chunk_id: str, text: str, meta: dict) -> "Chunk":
+    def from_store(chunk_id: str, text: str, meta: dict) -> Chunk:
         patterns = meta.get("injection_patterns") or ""
         return Chunk(
             chunk_id=chunk_id,
@@ -67,9 +66,9 @@ class ScoredChunk:
 
     chunk_id: str
     text: str = ""
-    vector_score: Optional[float] = None
-    bm25_score: Optional[float] = None
-    rrf_score: Optional[float] = None
+    vector_score: float | None = None
+    bm25_score: float | None = None
+    rrf_score: float | None = None
     flagged_injection: bool = False
 
 
@@ -89,7 +88,7 @@ class Answer:
     text: str
     citations: list[Citation] = field(default_factory=list)
     refused: bool = False
-    refusal_reason: Optional[str] = None
+    refusal_reason: str | None = None
     invalid_refs_removed: bool = False  # LLM 引用了不存在的编号，已被后处理剔除
     # P0-2 旁路 B：放行路径上由 pipeline 兜底。
     # 若最终拼进 LLM 的 contexts 里仍含被标记的 chunk（比如 penalize 配额内

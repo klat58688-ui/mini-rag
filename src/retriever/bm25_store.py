@@ -35,7 +35,7 @@ class BM25Store:
             return []
         scores = self._model.get_scores(q_tokens)
         ranked = sorted(
-            zip(self._chunks, scores), key=lambda x: x[1], reverse=True
+            zip(self._chunks, scores, strict=True), key=lambda x: x[1], reverse=True
         )[:top_k]
         out: list[ScoredChunk] = []
         for chunk, score in ranked:

@@ -11,8 +11,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 from eval.run_eval import load_qa
 
 ROOT = Path(__file__).resolve().parent.parent

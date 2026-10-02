@@ -15,17 +15,19 @@
 |---|---|
 | 语料 | **15 篇 → 58 chunk**（55 干净 / 3 注入样本） |
 | 评测集 | `qa.jsonl` **75 条**（51 单 gold + 14 多 gold + 10 拒答），覆盖 49/58 chunk<br>`probe.jsonl` 36 条 · 注入对照 case 5 个 |
-| 测试 | **114 条 / 12 个文件**，`pytest` 全绿 |
-| CI | GitHub Actions，Python **3.12 + 3.13**，**无需任何密钥**（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)） |
+| 测试 | **148 条 / 14 个文件**，`pytest` 全绿 |
+| CI | GitHub Actions，Python **3.12 + 3.13**，**ruff lint 门禁**，**无需任何密钥**（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)） |
 | 配置 | `top_k=5` · `final_top_k=5` · `rrf_k=60` · `cosine_threshold=0.35`<br>嵌入 `bge-large-zh-v1.5`（1024d，local） · LLM `kimi-k3` |
 
 **最近一次完整评测**（`python -m eval.run_eval --env .env --mode all`）：
 
 | 指标 | 值 | 读法 |
 |---|---|---|
-| retrieval `recall@10` | **0.995** | gold **覆盖率**——多 gold 题必须全部召回才满分 |
+| retrieval `recall@10` | **1.000** | gold **覆盖率**——多 gold 题必须全部召回才满分（⚠️ 已饱和，见 §15.26） |
 | retrieval `hit@10` | 1.000 | 任一 gold 命中（历史口径；单 gold 题下与 recall 相同） |
 | retrieval `mrr@10` | **0.958** | 排序质量——**做检索消融请看 `recall@10` + `mrr@10`** |
+| answer 引用精度 macro / micro | **0.882 / 0.768** | `[n]` 引用 ∩ gold 的比例；micro 明显低于 macro = 引用多的题噪声更多 |
+| answer 要点覆盖 macro / micro | 0.419 / 0.388 | gold 要点逐字命中率——**下界估计**，同义改写算漏，别读成"只有四成分对"（§15.32） |
 | refusal tp/tn/fp/fn | 10 / 63 / 2 / 0 | 那 2 条 fp 都是多跳题上下文不全导致，**拒答本身是正确的** |
 | injection 攻击成功率 | **0%** | 收紧判据（排除「引用 payload 以示拒绝」的误报） |
 | injection 拦截率 | 100% | |
@@ -68,7 +70,7 @@
 12. [已知"难点点名"](#12-已知难点点名)
 13. [项目结构](#13-项目结构)
 14. [如果给我更多时间，会……](#14-如果给我更多时间会)
-15. [边界与口径（审计日志 §15.1–§15.31）](#15-边界与口径审查轮补)
+15. [边界与口径（审计日志 §15.1–§15.32）](#15-边界与口径审查轮补)
 
 ---
 
@@ -2127,6 +2129,120 @@ python -m eval.run_eval --env .env --mode retrieval --skip-unanswerable 2>$null
 pytest -q                                                          # 131/131
 pytest tests/test_multihop.py -v                                   # 本节新增 13 条
 python -m eval.run_eval --env .env --mode retrieval --skip-unanswerable
+```
+
+### 15.32 答案质量"廉价层"评测 + 依赖锁定 + CI lint 门禁（2026-10-02）
+
+#### 一、动机：召回打满之后，"回答本身好不好"仍是黑盒
+
+至此三种评测模式（retrieval / refusal / injection）度量的是**证据层**：
+检索召没召回、拒答该不该拒、注入拦没拦住。
+但用户最终读到的是**回答**——它引的块对不对、cover 了要点没有，此前完全没有可度量信号。
+
+标准做法是 LLM-as-judge（再让一个大模型给回答打分）。
+它确实能判"引用是否支撑论断"这类语义题，但代价是：
+第二次 LLM 调用的成本与延迟、judge 自身的非确定性与立场偏见、
+以及"用黑盒评黑盒"的可解释性困境。
+所以这里走的是**先廉价后语义**的分层：P0 先上三个完全本地、逐位可复算的指标，
+把能量化的口径钉死；judge 层留作 P1，只补廉价层覆盖不了的语义判断。
+
+#### 二、指标设计：`--mode answer`，全本地、零额外 LLM 开销
+
+新增 [eval/run_eval.py](eval/run_eval.py) 的第四种模式（`--mode all` 现含 answer），
+每题跑一次真实 `pipeline.ask()`，产出三个度量：
+
+1. **引用精度 `citation_precision = |{cited} ∩ gold| / |cited|`**
+   回答里 `[n]` 引用解析到 chunk_id 后，与 gold_chunk_ids 求交。
+   - 分母是**引用条数，不去重**——重复引用同一个块不会刷分也不会被惩罚，如实计；
+   - **空引用返回 `None`（未定义），不是 0**，单独计入 `n_no_citation`——
+     "没引用"和"引用全错"是两种病，不能算成一个数；
+   - macro（每题均值）与 micro（全体引用总池）**双口径并列**：
+     两者背离说明引用数量与引用质量相关（实测正是如此，见 §五）。
+2. **要点覆盖 `answer_point_coverage`**：`qa.jsonl` 新增 `gold_answer_points` 字段
+   （每题一组必答要点字符串），统计回答正文里的逐字命中率。
+   **诚实声明：这是下界估计**——"3 天" vs "3 个工作日"这类同义改写算漏不算中。
+   它回答的是"至少 cover 了多少"，不是"cover 了多少"。
+3. **拒答交叉表（单次采样副产品）**：反正 75 题都跑了一遍 `ask()`，
+   顺手记 tp/tn/fp/fn。**回归判据仍以 `--mode refusal --repeat N` 的多数票为准**，
+   这里的单次数只用于粗看。
+
+**打分口径**：只有"可答且未拒答（tn）"的题才计精度与覆盖——
+可答题被拒（fp）只缩小统计基数（`n_refused_answerable`），
+拒答题未拒（fn）只进交叉表不打分。拒绝服务的回答没有"引用质量"可言。
+
+#### 三、依赖锁定：`>=` 全部改 `==`
+
+[requirements.txt](requirements.txt) 10 个包全部钉到实测可用版本
+（sqlite-vec 0.1.9 / rank-bm25 0.2.2 / jieba 0.42.1 / pypdf 6.19.0 / openai 3.22.1 /
+fastapi 0.142.1 / uvicorn 0.54.0 / pytest 9.1.1 / httpx 0.28.1 / ruff 0.16.10）。
+动机是面试作品的可复现性：半年后有人 clone 下来，`>=` 拖到的新版依赖
+可能让 148 条测试里的任何一条悄悄变红，而原因与他无关。
+唯一的升级动作写在文件头注释里：**改版本号 + 重跑全量测试 + 重跑三模式 eval**。
+
+#### 四、CI 加 ruff 门禁：45 → 0 的取舍
+
+新增 [ruff.toml](ruff.toml)，规则集是显式挑出来的，不是默认全集：
+
+> 只卡**正确性与可维护性信号**（F 未定义名、I import 排序、UP 语法现代化、
+> B 常见 bug 模式、SIM 可简化结构、BLE 盲捕异常、PIE/PLE/FURB 等），
+> **不卡行长与格式美学**——这个仓库注释密集且是中文，卡 E501 只会产生噪音。
+
+首跑 45 错，收口路径：`ruff check --fix` 自动修 38 处（未用导入、import 排序、
+PEP 604、无效 f-string / noqa 等），剩下手工修，其中三处值得一提：
+
+- **B023（闭包捕获循环变量）**：`eval_injection` 内嵌的多数票函数
+  提升为模块级纯函数 `_trial_majority(trials, key)`，顺带变得可单测；
+- **PLE2502/2515（字符串里的不可见字符）**：`guardrails.py` 的零宽字符集
+  改为 `\u200b` 等显式转义——**先逐位核实 codepoint 集合完全等价再改**，
+  auto-fix 触碰过的 `test_guardrails.py` 零宽字面量也经全量测试复核无回归；
+- **BLE001（盲捕 Exception）6 处**：全部是**刻意的顶层边界**
+  （API 兜底 500、CLI 退出码、REPL 不中断、eval 探测性统计），
+  窄化异常类型会改变语义且风险大于收益，故保留 + `noqa` + 理由注释。
+  一个意外收获：给 `api.py` 补上 `raise ... from e`（B904，保留异常链）后，
+  ruff 不再认为那个 `except` 是盲捕，原来的 `noqa` 反而过期被 RUF100 清掉——
+  异常链语义因此更诚实了。
+
+门禁落在 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：
+`ruff check .` 先于 pytest 执行，规则集演进只改 `ruff.toml` 一处。
+
+#### 五、真实系统基线（bge-large-zh 本地嵌入 + 真实 LLM，75 题全量）
+
+```
+[answer] n=75  引用精度 macro=0.882 micro=0.768 (scored 64)  要点覆盖 macro=0.419 micro=0.388 (scored 64)
+  refusal(单次采样): tp=10 tn=64 fp=1 fn=0  无引用回答=0  可答题被拒=1
+  ⚠️ 13 道题引用了 gold 之外的块（检索噪声漏进答案）
+```
+
+三个读数要点：
+
+1. **micro（0.768）明显低于 macro（0.882）**——引用条数多的题，噪声比例更高。
+   13 道"引了 gold 之外块"的题集中在差旅 / 发票这类主题相邻的语料区，
+   检索引来的"邻近但非 gold"的块被 LLM 一并引用。这不是引用解析的 bug，
+   是**检索噪声传导到答案层**的第一次量化证据。
+2. **要点覆盖 0.419 是下界**：人工抽查低分题，多数是同义改写漏记
+   （"原路退回" vs 要点"原路退回至支付账户"这类截断差异）。
+   它的正确用法是**纵向比较**（改版前后同集对比），不是横向解读绝对值。
+3. **fp=1 落在哪道题值得点名**：又是"北京出差住 3 晚"那道链式多跳题——
+   §15.31 刚靠 hop2 查询扩展修好它的召回，这次单次采样里门控又多拒了一次。
+   这与 §15.20 记录的 refusal ±1 单次采样噪声同型，
+   回归判据仍看 `--mode refusal --repeat N`，不为单次数改代码。
+
+#### 六、仍未解决 / 诚实声明
+
+- **引用精度只验证 id 匹配**，不判断"这句论断是否真由被引块支撑"——
+  后者是 LLM-as-judge 层的活（P1），未做。
+- **要点覆盖**受逐字匹配限制，高分可信（要点确实在）、低分不一定真低；
+  把它当准确率读是误读。
+- 拒答交叉表是单次采样，本节数字不构成回归基线。
+- 评测集去饱和（`recall@10` 已 1.000，P1）、rerank（P2）仍未做。
+
+#### 复现
+```
+pytest -q                                                          # 148/148
+pytest tests/test_eval_answer_metric.py -v                         # 本节新增 17 条
+ruff check .                                                       # All checks passed
+$env:EMBEDDING_PROVIDER="local"; $env:EMBEDDING_DIM="1024"
+python -m eval.run_eval --env .env --mode answer 2>$null           # 上文基线数字
 ```
 
 

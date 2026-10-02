@@ -94,7 +94,7 @@ def build_index(cfg: AppConfig) -> dict:
             vector_store.replace_doc(doc.id, chunks)
             stats["loaded"] += 1
             log.info("loaded %s -> %d chunks", path.name, len(chunks))
-        except Exception as e:  # 单文档失败不中断整场，但要汇总到调用方
+        except Exception as e:  # 单文档失败不中断整场，但要汇总到调用方  # noqa: BLE001
             msg = f"{path.name}: {type(e).__name__}: {e}"
             log.error("skip doc, %s", msg)
             stats["errors"].append(msg)
@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         cfg = load_config(args.env)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 配置加载失败的兜底出口码
         print(f"配置加载失败: {e}", file=sys.stderr)
         return 2
 

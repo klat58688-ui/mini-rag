@@ -38,6 +38,6 @@ def ask(payload: dict):
         raise HTTPException(status_code=400, detail="question 不能为空")
     try:
         ans = app.state.pipeline.ask(question)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:  # API 边界统一兜底为 500，from e 保留原始异常链
+        raise HTTPException(status_code=500, detail=str(e)) from e
     return asdict(ans)

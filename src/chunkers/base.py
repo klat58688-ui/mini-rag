@@ -14,7 +14,7 @@ from ..models import Chunk, Document
 
 
 def make_chunk_id(doc_id: str, chunk_index: int) -> str:
-    return hashlib.sha256(f"{doc_id}:{chunk_index}".encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(f"{doc_id}:{chunk_index}".encode()).hexdigest()[:16]
 
 
 class Chunker:

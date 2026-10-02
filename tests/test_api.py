@@ -7,7 +7,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-import src.api as api
+from src import api
 from src.models import Answer, Citation
 
 

@@ -1,9 +1,7 @@
 """端到端 pipeline mock 测试：LLM 被替换，验证编排顺序无误。"""
 
-from src.guardrails import validate_and_map_citations
 from src.models import Chunk, ScoredChunk
 from src.pipeline import RagPipeline
-from src.retriever.fusion import rrf_fuse
 
 
 class _Cfg:
@@ -43,7 +41,7 @@ class _Generator:
 
     def generate(self, query, contexts):
         # 校验传入的 contexts 编号正好是 1..len
-        for i, sc in enumerate(contexts, 1):
+        for _i, sc in enumerate(contexts, 1):
             assert isinstance(sc, ScoredChunk)
         return self.reply
 
@@ -59,7 +57,6 @@ def _make_chunk(cid: str, flagged: bool = False) -> Chunk:
 class _PipelineTestable(RagPipeline):
     """暴露内部步骤用于单测编排。"""
 
-    pass
 
 
 def test_happy_path_with_valid_citation():

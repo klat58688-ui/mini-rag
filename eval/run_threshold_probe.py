@@ -22,11 +22,11 @@ from pathlib import Path
 # 让脚本既可作为 python -m eval.run_threshold_probe 运行，也可直接 python eval/run_threshold_probe.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.cli import _build_embedder  # noqa: E402
-from src.config import load_config  # noqa: E402
-from src.guardrails import should_refuse  # noqa: E402
-from src.retriever.bm25_store import BM25Store  # noqa: E402
-from src.retriever.vector_store import ChromaVectorStore  # noqa: E402
+from src.cli import _build_embedder
+from src.config import load_config
+from src.guardrails import should_refuse
+from src.retriever.bm25_store import BM25Store
+from src.retriever.vector_store import ChromaVectorStore
 
 
 def _load_probe(path: Path) -> list[dict]:

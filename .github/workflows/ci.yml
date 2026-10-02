@@ -27,6 +27,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # lint 门禁：规则集与取舍见 ruff.toml（§15.32），失败即红。
+      # ruff 已 pin 在 requirements.txt，无需单独安装。
+      - name: Lint (ruff)
+        run: ruff check .
+
       # 全部测试都用 stub / fake provider，不读 .env、不打 LLM、不加载嵌入模型，
       # 所以 CI 无需任何密钥，也不需要下载模型权重。
       - name: Run tests

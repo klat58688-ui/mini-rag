@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
-
 
 # ── 汇总意图触发 ─────────────────────────────────────────
 # 用户明确要"加起来"时，才值得尝试补齐缺失的"金额维度"。
@@ -50,7 +48,7 @@ class Hop2Plan:
 
     triggered: bool               # 汇总意图是否命中
     original_query: str
-    expanded_query: Optional[str]  # 若 None 表示无可扩展或扩展了也不比原 query 强
+    expanded_query: str | None  # 若 None 表示无可扩展或扩展了也不比原 query 强
     matched_abbreviation: str = ""  # 命中的简称（诊断用）
 
 

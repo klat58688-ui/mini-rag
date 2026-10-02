@@ -8,7 +8,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 class ConfigError(RuntimeError):
@@ -31,7 +30,7 @@ def _load_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def _get(env: dict[str, str], key: str, default: Optional[str] = None) -> str:
+def _get(env: dict[str, str], key: str, default: str | None = None) -> str:
     if key in os.environ:
         return os.environ[key]
     if key in env:

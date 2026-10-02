@@ -36,11 +36,10 @@ def tokenize(text: str) -> list[str]:
         token = raw.strip().lower()
         if not token:
             continue
-        if _ALNUM_RE.fullmatch(token):
+        if _ALNUM_RE.fullmatch(token) or (
+            re.search(r"[一-鿿]", token) and token not in _STOPWORDS
+        ):
             tokens.append(token)
-        elif re.search(r"[一-鿿]", token):
-            if token not in _STOPWORDS:
-                tokens.append(token)
     return tokens
 
 

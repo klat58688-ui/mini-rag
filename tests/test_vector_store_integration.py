@@ -4,7 +4,6 @@
 绕开"需要真实 OpenAI embedding key"的依赖。
 """
 
-import math
 import shutil
 import tempfile
 from pathlib import Path

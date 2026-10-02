@@ -10,7 +10,6 @@ from src.multihop import merge_hop_results, plan_hop2
 from src.pipeline import RagPipeline
 from src.retriever.fusion import rrf_fuse
 
-
 # ── plan_hop2 纯函数 ──────────────────────────────────────
 
 
